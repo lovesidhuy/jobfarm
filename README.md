@@ -4,6 +4,72 @@
   <strong>Open-source job discovery & application automation.</strong>
 </p>
 
+<div align="center">
+  <h2>Supported Platforms & Operational Reality</h2>
+  <p>JobFarm supports 9+ major job boards and ATS platforms. Due to varying anti-bot measures (Cloudflare, CAPTCHAs) and lead volume, productivity varies by portal. <em>For maximum success, pair JobFarm with high-quality leased rotational proxies, CapMonster/CapSolver, and NSTbrowser.</em></p>
+</div>
+
+<table>
+  <thead>
+    <tr>
+      <th>Platform</th>
+      <th>Volume & Productivity</th>
+      <th>Known Evasion / Operational Quirks</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>Indeed</strong></td>
+      <td>🟢 <strong>Highest Volume & Productivity</strong></td>
+      <td>The primary engine of JobFarm. Excellent conversion rates, but heavily dependent on strong residential proxies to avoid shadow-banning.</td>
+    </tr>
+    <tr>
+      <td><strong>LinkedIn</strong></td>
+      <td>🟢 <strong>High Volume (2nd Best)</strong></td>
+      <td>Consistent high volume and very stable native DOM form-filling. </td>
+    </tr>
+    <tr>
+      <td><strong>Workopolis</strong></td>
+      <td>🟡 <strong>High Productivity, Low Volume</strong></td>
+      <td>Very reliable automation and high conversion rates, but overall job listing volume is significantly lower.</td>
+    </tr>
+    <tr>
+      <td><strong>Greenhouse</strong></td>
+      <td>🟡 <strong>High Productivity</strong></td>
+      <td>Great application productivity for direct ATS leads. Forms are stable and easy to traverse.</td>
+    </tr>
+    <tr>
+      <td><strong>Glassdoor</strong></td>
+      <td>🟠 <strong>Moderate</strong></td>
+      <td>Prone to aggressive Cloudflare (CF) loops and occasional JobSpy HTTP lead-generation blocks. Requires CDP stealth scraping to maintain flow.</td>
+    </tr>
+    <tr>
+      <td><strong>Job Bank Canada</strong></td>
+      <td>🟠 <strong>Low Volume</strong></td>
+      <td>Successfully automated, but yields a very low volume of relevant tech/professional leads.</td>
+    </tr>
+    <tr>
+      <td><strong>BambooHR</strong></td>
+      <td>🟠 <strong>Low Volume</strong></td>
+      <td>Applications are highly successful when found, but there are very few leads using this ATS in the wild.</td>
+    </tr>
+    <tr>
+      <td><strong>Lever</strong></td>
+      <td>🔴 <strong>Bottlenecked</strong></td>
+      <td>Prone to strict <strong>hCaptcha</strong> challenges on submission which can throttle throughput.</td>
+    </tr>
+    <tr>
+      <td><strong>Ashby</strong></td>
+      <td>🔴 <strong>Bottlenecked</strong></td>
+      <td>Aggressive anti-spam thresholds. Will silently drop or block applications if it detects high-velocity bot-like submission patterns.</td>
+    </tr>
+  </tbody>
+</table>
+
+<br>
+
+> 💡 **Infrastructure Tip:** To achieve the highest throughput on strict portals like Indeed, Glassdoor, and Lever, you **must** use persistent **NSTbrowser profiles** paired with leased, high-quality rotational residential proxies and a solver like **CapMonster or CapSolver**.
+
 <p align="center">
   <a href="#key-features">Features</a> •
   <a href="#quickstart">Quickstart</a> •
