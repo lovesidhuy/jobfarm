@@ -1,0 +1,90 @@
+{
+  "generated_at_utc": "2026-08-12T02:45:13.861206+00:00",
+  "source": "jobbots.application_queue (production farm)",
+  "note": "Titles/companies preserved; personal identifiers, emails, profile IDs, and full query strings removed.",
+  "24h": {
+    "status_counts": {
+      "applied": 62,
+      "bookmarked": 30,
+      "dead": 26,
+      "queued": 21,
+      "already_applied": 20,
+      "skipped": 17,
+      "leased": 3
+    },
+    "applied_by_portal": {
+      "workopolis": 27,
+      "indeed": 22,
+      "linkedin": 8,
+      "greenhouse": 4,
+      "google": 1
+    },
+    "applied_total": 62
+  },
+  "7d": {
+    "status_counts": {
+      "already_applied": 140,
+      "applied": 121,
+      "skipped": 50,
+      "dead": 38,
+      "bookmarked": 31,
+      "queued": 21,
+      "leased": 3
+    },
+    "applied_by_portal": {
+      "indeed": 45,
+      "workopolis": 41,
+      "linkedin": 18,
+      "google": 9,
+      "greenhouse": 5,
+      "bamboohr": 3
+    },
+    "applied_total": 121
+  },
+  "30d": {
+    "status_counts": {
+      "already_applied": 140,
+      "applied": 121,
+      "skipped": 50,
+      "dead": 38,
+      "bookmarked": 31,
+      "queued": 21,
+      "leased": 3
+    },
+    "applied_by_portal": {
+      "indeed": 45,
+      "workopolis": 41,
+      "linkedin": 18,
+      "google": 9,
+      "greenhouse": 5,
+      "bamboohr": 3
+    },
+    "applied_total": 121
+  },
+  "daily_applied_14d": {
+    "2026-08-09": {
+      "google": 2,
+      "indeed": 5
+    },
+    "2026-08-10": {
+      "bamboohr": 3,
+      "google": 6,
+      "greenhouse": 1,
+      "indeed": 15,
+      "linkedin": 10,
+      "workopolis": 9
+    },
+    "2026-08-11": {
+      "google": 1,
+      "greenhouse": 4,
+      "indeed": 12,
+      "linkedin": 3,
+      "workopolis": 29
+    },
+    "2026-08-12": {
+      "indeed": 13,
+      "linkedin": 5,
+      "workopolis": 3
+    }
+  }
+}

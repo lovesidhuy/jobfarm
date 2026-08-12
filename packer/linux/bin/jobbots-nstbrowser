@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+set -euo pipefail
+if ! mountpoint -q /srv/jobbots; then
+  grep -q '^CLOUD_PROVIDER=gcp' /etc/jobbots/runtime.conf || exit 32
+fi
+source /etc/jobbots/secrets.env
+# Keep the local NST agent on the same account slot as the discover/apply
+# services.  Those services load this file after secrets.env, so loading it
+# here too prevents a slot-2 agent from receiving slot-1 worker credentials.
+if [[ -f /etc/jobbots/runtime-prod-overrides.conf ]]; then
+  source /etc/jobbots/runtime-prod-overrides.conf
+fi
+: "${NSTBROWSER_API_KEY:?NSTBROWSER_API_KEY is required}"
+
+# Prefer key matching active slot so docker agent + cloud profiles align
+slot="${NSTBROWSER_ACTIVE_SLOT:-1}"
+token="$NSTBROWSER_API_KEY"
+if [[ "$slot" == "2" || "$slot" == "secondary" || "$slot" == "b" ]]; then
+  if [[ -n "${NSTBROWSER_API_KEY_2:-}" ]]; then
+    token="$NSTBROWSER_API_KEY_2"
+  fi
+else
+  # slot 1: use primary; recover if key was overwritten with key2
+  if [[ -n "${NSTBROWSER_API_KEY_SLOT1:-}" ]]; then
+    token="$NSTBROWSER_API_KEY_SLOT1"
+  fi
+fi
+
+install -d -o ubuntu -g ubuntu -m 0750 /srv/jobbots/nstbrowser
+docker rm -f jobbots-nstbrowser >/dev/null 2>&1 || true
+# --shm-size: nstchrome dies with "retrieving browser version info failed" when
+# /dev/shm is tiny (default 64MB) under concurrent profile opens.
+# --init: reap zombie nstchrome children so the agent does not accumulate <defunct>.
+exec docker run --name jobbots-nstbrowser --network host \
+  --restart no \
+  --init \
+  --shm-size=2g \
+  --mount type=bind,src=/srv/jobbots/nstbrowser,dst=/data \
+  -e "TOKEN=${token}" \
+  -e "DATADIR=/data" \
+  nstbrowser/browserless:latest

@@ -1,0 +1,19 @@
+# Template General profile (Customer Support, Operations, Administration)
+
+owner: example
+name: general
+job_profile: General
+bot_name: indeed_general
+
+config_module: config.general
+
+answer_bank: data/qa_banks/general_job_application_qa_bank.json
+
+resumes:
+  default: profiles/resumes/sample_resume_general.pdf
+  cover_letter: profiles/resumes/sample_cover_letter_general.pdf
+
+portals: [indeed, glassdoor, workopolis, linkedin, jobbank]
+
+env:
+  INDEED_BASE_URL: https://ca.indeed.com

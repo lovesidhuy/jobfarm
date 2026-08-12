@@ -1,0 +1,13 @@
+# Example search manifest — adjust locations and portals for your hunt.
+
+source_of_truth:
+  terms_module: config.general.search
+  hero_terms_module: config.general.hero_terms
+
+geo:
+  primary_location: "Your City, Province, Country"
+  policy: metro_only
+
+discovery:
+  portals:
+    indeed: { enabled: true, bot: indeed_general }

@@ -1,0 +1,11 @@
+{
+  "id": "zVLdKzU77dMTrkTMf",
+  "name": "test-queue-034ccf035d1e454bbf29a14768271e64",
+  "accessed_at": "2026-08-12 03:07:10.768236+00:00",
+  "created_at": "2026-08-12 03:07:10.760012+00:00",
+  "modified_at": "2026-08-12 03:07:10.767197+00:00",
+  "had_multiple_clients": false,
+  "handled_request_count": 0,
+  "pending_request_count": 1,
+  "total_request_count": 1
+}

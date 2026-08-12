@@ -1,0 +1,73 @@
+#!/usr/bin/env bash
+# Single production LinkedIn bot discovery (linkedin_general NST /
+# user@example.com): IT terms + office/CS terms.
+#
+# Dual profile passes keep gates honest:
+#   1) profile=it     — IT/helpdesk/QA Easy Apply (IT title gates)
+#   2) profile=general — office/customer service (general gates)
+# Apply always uses linkedin_general (see application_worker + portal_profile_bot_name).
+# Glassdoor/Workopolis general are intentionally not used — IT only.
+set -euo pipefail
+
+export PATH="/opt/jobbots/venv/bin:/usr/local/bin:/usr/bin:${PATH:-}"
+export PYTHONPATH="/opt/jobbots/app/automation_monorepo${PYTHONPATH:+:$PYTHONPATH}"
+export DISCOVERY_ENGINE="${DISCOVERY_ENGINE:-new}"
+export DISCOVERY_EMAIL_REFRESH_HOURS="${DISCOVERY_EMAIL_REFRESH_HOURS:-6}"
+export DISCOVERY_BATCH_AI_MAX="${DISCOVERY_BATCH_AI_MAX:-40}"
+export MONGODB_URI="${MONGODB_URI:-mongodb://127.0.0.1:27017}"
+export JOBBOTS_MONGO_DATABASE="${JOBBOTS_MONGO_DATABASE:-jobbots}"
+export PYTHONUNBUFFERED=1
+
+ROOT="/opt/jobbots/app/automation_monorepo"
+cd "$ROOT"
+
+MAX="${JOBBOTS_LINKEDIN_MAX_RESULTS:-${JOBBOTS_LINKEDIN_GENERAL_MAX_RESULTS:-60}}"
+FRESH="${JOBBOTS_DISCOVERY_FRESHNESS_DAYS:-7}"
+XVFB=(/usr/bin/xvfb-run -a --server-args="-screen 0 1280x1024x24")
+PY=(/opt/jobbots/venv/bin/python scripts/discovery_runner.py)
+
+# --- IT terms (profile=it) ---
+if [ -z "${JOBBOTS_LINKEDIN_IT_KEYWORDS:-}" ]; then
+  JOBBOTS_LINKEDIN_IT_KEYWORDS="$(/opt/jobbots/venv/bin/python - <<'PY'
+from pathlib import Path
+import importlib.util
+p = Path("/opt/jobbots/app/automation_monorepo/config/it/hero_terms.py")
+spec = importlib.util.spec_from_file_location("it_hero_terms", p)
+m = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(m)
+print(",".join(m.LINKEDIN_HERO_TERMS))
+PY
+)"
+fi
+
+# --- Office/CS terms (profile=general) ---
+if [ -z "${JOBBOTS_LINKEDIN_OFFICE_KEYWORDS:-}" ]; then
+  JOBBOTS_LINKEDIN_OFFICE_KEYWORDS="$(/opt/jobbots/venv/bin/python - <<'PY'
+from pathlib import Path
+import importlib.util
+p = Path("/opt/jobbots/app/automation_monorepo/config/general/hero_terms.py")
+spec = importlib.util.spec_from_file_location("gen_hero_terms", p)
+m = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(m)
+print(",".join(m.LINKEDIN_OFFICE_TERMS))
+PY
+)"
+fi
+
+echo "[jobbots-discover-linkedin] sole bot=linkedin_general max=$MAX freshness=${FRESH}d"
+echo "[jobbots-discover-linkedin] pass1=IT keywords=$(echo "$JOBBOTS_LINKEDIN_IT_KEYWORDS" | awk -F, '{print NF}')"
+"${XVFB[@]}" "${PY[@]}" \
+  --profile it --portals linkedin --keyword "$JOBBOTS_LINKEDIN_IT_KEYWORDS" \
+  --max-results "$MAX" --freshness-days "$FRESH"
+
+echo "[jobbots-discover-linkedin] pass2=office/CS keywords=$(echo "$JOBBOTS_LINKEDIN_OFFICE_KEYWORDS" | awk -F, '{print NF}')"
+"${XVFB[@]}" "${PY[@]}" \
+  --profile general --portals linkedin --keyword "$JOBBOTS_LINKEDIN_OFFICE_KEYWORDS" \
+  --max-results "${JOBBOTS_LINKEDIN_GENERAL_MAX_RESULTS:-50}" --freshness-days "$FRESH"
+
+echo "[jobbots-discover-linkedin] pass3=LinkedIn→ATS crossmatch keywords=$(echo "$JOBBOTS_LINKEDIN_IT_KEYWORDS" | awk -F, '{print NF}')"
+"${XVFB[@]}" "${PY[@]}" \
+  --profile it --portals ats_crossmatch --keyword "$JOBBOTS_LINKEDIN_IT_KEYWORDS" \
+  --max-results "${ATS_CROSSMATCH_MAX_PER_TERM:-40}" --freshness-days "$FRESH"
+
+echo "[jobbots-discover-linkedin] done (IT + office/CS + ATS crossmatch → one apply session)"

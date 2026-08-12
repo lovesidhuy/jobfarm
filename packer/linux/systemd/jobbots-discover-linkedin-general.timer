@@ -1,0 +1,13 @@
+[Unit]
+Description=Jobbots LinkedIn GENERAL discovery timer (~75m)
+Requires=jobbots-discover-linkedin-general.service
+
+[Timer]
+OnBootSec=20min
+OnUnitActiveSec=75min
+AccuracySec=2min
+Persistent=true
+Unit=jobbots-discover-linkedin-general.service
+
+[Install]
+WantedBy=timers.target

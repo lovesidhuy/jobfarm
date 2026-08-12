@@ -1,0 +1,92 @@
+name: Fast Sync Code and Restart
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_environment:
+        description: Protected GitHub environment
+        required: true
+        type: choice
+        options: [canary, production]
+      restart_action:
+        description: Action after syncing code
+        required: true
+        type: choice
+        options: [Restart Services, Reboot VM]
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: fast-sync-${{ inputs.target_environment }}
+  cancel-in-progress: false
+
+jobs:
+  sync-and-restart:
+    name: Fast Sync & Restart
+    environment: ${{ inputs.target_environment }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Assert protected inputs
+        run: |
+          bash .github/scripts/assert-linux-target.sh
+        env:
+          TARGET_ENVIRONMENT: ${{ inputs.target_environment }}
+          RESOURCE_PREFIX: ${{ vars.RESOURCE_PREFIX }}
+          VM_NAME: ${{ vars.VM_NAME }}
+          # Instance IAM only allows production/deploy/* (or canary/* on canary).
+          ARTIFACT_PREFIX: ${{ inputs.target_environment == 'production' && 'production/deploy' || vars.ARTIFACT_PREFIX }}
+
+      - name: Resolve running VM ID
+        id: resolve-vm
+        run: |
+          set -euo pipefail
+          vm_id="$(aws ec2 describe-instances \
+            --filters "Name=tag:ResourcePrefix,Values=$RESOURCE_PREFIX" \
+                      "Name=tag:Ephemeral,Values=true" \
+                      "Name=instance-state-name,Values=running" \
+            --query 'Reservations[0].Instances[0].InstanceId' \
+            --output text)"
+          if [ -z "$vm_id" ] || [ "$vm_id" = "None" ]; then
+            echo "::error::No running worker VM found for prefix $RESOURCE_PREFIX"
+            exit 1
+          fi
+          echo "vm_id=$vm_id" >> "$GITHUB_OUTPUT"
+          echo "Found active VM: $vm_id"
+        env:
+          RESOURCE_PREFIX: ${{ vars.RESOURCE_PREFIX }}
+
+      - name: Sync the same release path used by Production Cycle
+        run: |
+          set -euo pipefail
+          START_BOTS=1 bash scripts/lifecycle.sh sync
+        env:
+          AWS_REGION: ${{ vars.AWS_REGION }}
+          AWS_DEFAULT_REGION: ${{ vars.AWS_REGION }}
+          TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+          RESOURCE_PREFIX: ${{ vars.RESOURCE_PREFIX }}
+          TARGET_ENVIRONMENT: ${{ inputs.target_environment }}
+          AVAILABILITY_ZONE: ${{ vars.AVAILABILITY_ZONE }}
+          VM_NAME: ${{ vars.VM_NAME }}
+          ARTIFACT_PREFIX: ${{ inputs.target_environment == 'production' && 'production/deploy' || vars.ARTIFACT_PREFIX }}
+
+      - name: Execute restart action
+        run: |
+          set -euo pipefail
+          vm_id="${{ steps.resolve-vm.outputs.vm_id }}"
+          if [ "${{ inputs.restart_action }}" = "Reboot VM" ]; then
+            echo "Requesting system reboot..."
+            # We run reboot in background so SSM command doesn't block/fail when connection drops
+            .github/scripts/ssm-run.sh "$vm_id" "sudo reboot &" || true
+            echo "Reboot command initiated."
+          else
+            echo "Services were restarted by scripts/lifecycle.sh sync."
+          fi

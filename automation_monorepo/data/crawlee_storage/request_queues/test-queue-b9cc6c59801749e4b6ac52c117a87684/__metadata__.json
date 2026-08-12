@@ -1,0 +1,11 @@
+{
+  "id": "gEb9kmBqvljqIAgyg",
+  "name": "test-queue-b9cc6c59801749e4b6ac52c117a87684",
+  "accessed_at": "2026-08-12 03:10:48.314747+00:00",
+  "created_at": "2026-08-12 03:10:48.292058+00:00",
+  "modified_at": "2026-08-12 03:10:48.312883+00:00",
+  "had_multiple_clients": false,
+  "handled_request_count": 0,
+  "pending_request_count": 1,
+  "total_request_count": 1
+}

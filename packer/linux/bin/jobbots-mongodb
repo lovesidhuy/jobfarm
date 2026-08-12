@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+set -euo pipefail
+if ! mountpoint -q /srv/jobbots; then
+  grep -q '^CLOUD_PROVIDER=gcp' /etc/jobbots/runtime.conf || exit 32
+fi
+install -d -m 0750 /srv/jobbots/mongodb
+chown -R 999:999 /srv/jobbots/mongodb
+docker rm -f jobbots-mongodb >/dev/null 2>&1 || true
+exec docker run --name jobbots-mongodb --network host \
+  --restart no \
+  --mount type=bind,src=/srv/jobbots/mongodb,dst=/data/db \
+  mongo:8.0 --bind_ip 127.0.0.1 --port 27017

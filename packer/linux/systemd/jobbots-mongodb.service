@@ -1,0 +1,14 @@
+[Unit]
+Description=Jobbots MongoDB on persistent EBS
+Requires=docker.service jobbots-persistent-volume.service
+After=docker.service jobbots-persistent-volume.service
+
+[Service]
+Type=simple
+ExecStart=/opt/jobbots/bin/jobbots-mongodb
+ExecStop=/usr/bin/docker stop -t 60 jobbots-mongodb
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

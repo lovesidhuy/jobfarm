@@ -1,0 +1,17 @@
+[Unit]
+Description=NSTbrowser Linux runtime
+Requires=docker.service jobbots-persistent-volume.service
+Requires=jobbots-load-secrets.service
+After=docker.service jobbots-persistent-volume.service jobbots-load-secrets.service
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/jobbots/secrets.env
+ExecStart=/opt/jobbots/bin/jobbots-nstbrowser
+ExecStop=/usr/bin/docker stop -t 120 jobbots-nstbrowser
+Restart=on-failure
+RestartSec=15
+TimeoutStopSec=150
+
+[Install]
+WantedBy=multi-user.target

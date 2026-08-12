@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+set -euo pipefail
+source /etc/jobbots/runtime.conf
+: "${JOBBOTS_ARTIFACT_BUCKET:?JOBBOTS_ARTIFACT_BUCKET is required}"
+: "${JOBBOTS_ARTIFACT_PREFIX:?JOBBOTS_ARTIFACT_PREFIX is required}"
+if ! mountpoint -q /srv/jobbots; then
+  grep -q '^CLOUD_PROVIDER=gcp' /etc/jobbots/runtime.conf || exit 32
+fi
+
+run_id="${JOBBOTS_RUN_ID:-$(cat /etc/machine-id)}"
+prefix="s3://${JOBBOTS_ARTIFACT_BUCKET}/${JOBBOTS_ARTIFACT_PREFIX}/runs/${run_id}"
+aws s3 sync /srv/jobbots/application "${prefix}/application" \
+  --no-follow-symlinks --only-show-errors
+if [ -d /opt/jobbots/app ]; then
+  aws s3 sync /opt/jobbots/app "${prefix}/repo-artifacts" \
+    --no-follow-symlinks \
+    --exclude "*" \
+    --include "*/logs/*" \
+    --include "*/screenshots/*" \
+    --include "*/reports/*" \
+    --include "*.csv" \
+    --include "*.jsonl" \
+    --only-show-errors
+fi
+if [ -d /var/lib/jobbots ]; then
+  aws s3 sync /var/lib/jobbots "${prefix}/runtime-data" \
+    --no-follow-symlinks \
+    --exclude "*" \
+    --include "training/*" \
+    --include "logs/*" \
+    --include "reports/*" \
+    --include "*.jsonl" \
+    --only-show-errors
+fi
+aws s3 cp /etc/jobbots/runtime.conf "${prefix}/configuration/runtime.conf" --only-show-errors
+jq -n \
+  --arg run_id "$run_id" \
+  --arg timestamp "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+  --arg volume "$(findmnt -n -o SOURCE /srv/jobbots)" \
+  '{run_id:$run_id,timestamp:$timestamp,persistent_volume:$volume,status:"synced"}' \
+  >/tmp/jobbots-artifact-manifest.json
+aws s3 cp /tmp/jobbots-artifact-manifest.json "${prefix}/manifest.json" --only-show-errors

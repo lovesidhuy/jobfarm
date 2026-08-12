@@ -1,0 +1,15 @@
+environment          = "canary"
+deployment_tier      = "canary"
+resource_prefix      = "jobbots-canary"
+vm_name              = "jobbots-canary-vm"
+machine_type         = "e2-standard-4"
+boot_disk_size_gb    = 64
+golden_image_family  = "ubuntu-2404-lts-amd64"
+golden_image_project = "ubuntu-os-cloud"
+
+# AWS backend integration
+aws_region            = "us-west-2"
+profile_lease_table_name = "jobbots-canary-profile-leases"
+artifact_bucket_name  = "jobbots-canary-artifacts"
+artifact_prefix       = "canary"
+runtime_secret_name   = "jobbots-canary/runtime"

@@ -1,0 +1,79 @@
+#cloud-config
+%{ if vm_admin_password != "" ~}
+chpasswd:
+  list: |
+    ubuntu:${vm_admin_password}
+  expire: false
+%{ endif ~}
+write_files:
+  - path: /usr/local/sbin/jobbots-mount-persistent-volume
+    owner: root:root
+    permissions: "0755"
+    content: |
+      #!/usr/bin/env bash
+      set -euo pipefail
+      volume_id="$${JOBBOTS_VOLUME_ID:-${persistent_volume_id}}"
+      device="/dev/disk/by-id/nvme-Amazon_Elastic_Block_Store_$${volume_id//-/}"
+      for _ in $(seq 1 120); do
+        [ -b "$device" ] && break
+        sleep 2
+      done
+      [ -b "$device" ] || { echo "Persistent EBS device not found: $device" >&2; exit 1; }
+      if ! blkid "$device" >/dev/null 2>&1; then
+        mkfs.ext4 -L jobbots-persist "$device"
+      fi
+      install -d -m 0755 /srv/jobbots
+      grep -q 'LABEL=jobbots-persist' /etc/fstab || echo 'LABEL=jobbots-persist /srv/jobbots ext4 defaults,nofail 0 2' >> /etc/fstab
+      mountpoint -q /srv/jobbots || mount /srv/jobbots
+      install -d -m 0750 /srv/jobbots/mongodb
+      install -d -o ubuntu -g ubuntu -m 0750 /srv/jobbots/application
+      install -d -o ubuntu -g ubuntu -m 0750 /srv/jobbots/nstbrowser
+  - path: /etc/systemd/system/jobbots-persistent-volume.service
+    owner: root:root
+    permissions: "0644"
+    content: |
+      [Unit]
+      Description=Mount and initialize persistent jobbots EBS volume
+      Before=mongod.service docker.service
+      After=local-fs.target
+
+      [Service]
+      Type=oneshot
+      ExecStart=/usr/local/sbin/jobbots-mount-persistent-volume
+      RemainAfterExit=yes
+
+      [Install]
+      WantedBy=multi-user.target
+  - path: /etc/jobbots/runtime.conf
+    owner: root:root
+    permissions: "0644"
+    content: |
+      AWS_REGION=${aws_region}
+      AWS_DEFAULT_REGION=${aws_region}
+      JOBBOTS_PROFILE_LEASE_TABLE=${profile_lease_table}
+      JOBBOTS_PERSISTENT_ROOT=/srv/jobbots
+      JOBBOTS_ARTIFACT_BUCKET=${artifact_bucket}
+      JOBBOTS_ARTIFACT_PREFIX=${artifact_prefix}
+      JOBBOTS_RUNTIME_SECRET=${runtime_secret_name}
+      JOBBOTS_DEPLOYMENT_TIER=${deployment_tier}
+      JOBBOTS_RESOURCE_PREFIX=${resource_prefix}
+  - path: /usr/local/sbin/jobbots-configure-xrdp
+    owner: root:root
+    permissions: "0755"
+    content: |
+      #!/usr/bin/env bash
+      set -euo pipefail
+      export DEBIAN_FRONTEND=noninteractive
+      if ! command -v xrdp >/dev/null 2>&1; then
+        apt-get update -qq
+        apt-get install -y -qq xrdp xfce4 xfce4-terminal
+      fi
+      echo xfce4-session > /home/ubuntu/.xsession
+      chown ubuntu:ubuntu /home/ubuntu/.xsession
+      adduser xrdp ssl-cert 2>/dev/null || true
+      systemctl enable xrdp
+      systemctl restart xrdp
+runcmd:
+  - /usr/local/sbin/jobbots-configure-xrdp
+  - systemctl daemon-reload
+  - systemctl enable --now jobbots-persistent-volume.service

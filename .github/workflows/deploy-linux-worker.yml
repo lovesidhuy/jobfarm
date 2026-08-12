@@ -1,0 +1,92 @@
+name: Deploy Disposable Linux Worker
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_environment:
+        description: Protected GitHub environment
+        required: true
+        type: choice
+        options: [canary, production]
+      golden_image_id:
+        description: Environment-scoped Linux golden AMI ID
+        required: true
+        type: string
+      confirm_resource_prefix:
+        description: Type the exact protected RESOURCE_PREFIX to deploy
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: linux-lifecycle-${{ inputs.target_environment }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    environment: ${{ inputs.target_environment }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.8.0"
+
+      - name: Assert protected inputs
+        run: |
+          bash .github/scripts/assert-linux-target.sh
+          test "$CONFIRM_RESOURCE_PREFIX" = "$RESOURCE_PREFIX"
+        env:
+          TARGET_ENVIRONMENT: ${{ inputs.target_environment }}
+          RESOURCE_PREFIX: ${{ vars.RESOURCE_PREFIX }}
+          VM_NAME: ${{ vars.VM_NAME }}
+          ARTIFACT_PREFIX: ${{ vars.ARTIFACT_PREFIX }}
+          CONFIRM_RESOURCE_PREFIX: ${{ inputs.confirm_resource_prefix }}
+
+      - name: Read persistent outputs
+        run: |
+          terraform -chdir=terraform/persistent init -reconfigure \
+            -backend-config="bucket=$TF_STATE_BUCKET" \
+            -backend-config="region=$AWS_REGION" \
+            -backend-config="key=${RESOURCE_PREFIX}/persistent.tfstate"
+          .github/scripts/write-worker-tfvars.sh "${{ inputs.golden_image_id }}"
+        env:
+          AWS_REGION: ${{ vars.AWS_REGION }}
+          AVAILABILITY_ZONE: ${{ vars.AVAILABILITY_ZONE }}
+          TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+          TARGET_ENVIRONMENT: ${{ inputs.target_environment }}
+          RESOURCE_PREFIX: ${{ vars.RESOURCE_PREFIX }}
+          VM_NAME: ${{ vars.VM_NAME }}
+          ARTIFACT_PREFIX: ${{ vars.ARTIFACT_PREFIX }}
+
+      - name: Apply disposable worker
+        run: |
+          terraform -chdir=terraform init -reconfigure \
+            -backend-config="bucket=$TF_STATE_BUCKET" \
+            -backend-config="region=$AWS_REGION" \
+            -backend-config="key=${RESOURCE_PREFIX}/worker.tfstate"
+          terraform -chdir=terraform apply -auto-approve -lock-timeout=300s
+        env:
+          AWS_REGION: ${{ vars.AWS_REGION }}
+          AVAILABILITY_ZONE: ${{ vars.AVAILABILITY_ZONE }}
+          TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+          TARGET_ENVIRONMENT: ${{ inputs.target_environment }}
+          RESOURCE_PREFIX: ${{ vars.RESOURCE_PREFIX }}
+          VM_NAME: ${{ vars.VM_NAME }}
+          ARTIFACT_PREFIX: ${{ vars.ARTIFACT_PREFIX }}
+
+      - name: Read worker outputs
+        id: outputs
+        run: echo "vm_id=$(terraform -chdir=terraform output -raw vm_id)" >> "$GITHUB_OUTPUT"
+
+      - name: Verify mount ordering and no bot startup
+        run: .github/scripts/ssm-run.sh "$VM_ID" 'set -euo pipefail; mountpoint -q /srv/jobbots; systemctl is-active jobbots-mongodb.service; systemctl is-enabled jobbots-supervisor.service && exit 1 || true; ! systemctl is-active --quiet jobbots-supervisor.service'
+        env:
+          VM_ID: ${{ steps.outputs.outputs.vm_id }}

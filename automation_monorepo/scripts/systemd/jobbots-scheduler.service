@@ -1,0 +1,18 @@
+[Unit]
+Description=Jobbots Background Scheduler Daemon Service
+After=network.target
+Documentation=https://github.com/usery/automation
+
+[Service]
+Type=simple
+User=jobbots
+WorkingDirectory=/srv/jobbots/automation_monorepo
+EnvironmentFile=/etc/jobbots/secrets.env
+ExecStart=/srv/jobbots/automation_monorepo/.venv/bin/python scripts/cron_scheduler.py
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

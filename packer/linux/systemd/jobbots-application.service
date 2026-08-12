@@ -1,0 +1,36 @@
+[Unit]
+Description=Jobbots application queue workers
+# Wants (not Requires) so NST/mongo restarts do not thrash apply workers
+Wants=jobbots-mongodb.service jobbots-nstbrowser.service jobbots-resume-workflow.service
+After=jobbots-mongodb.service jobbots-nstbrowser.service jobbots-resume-workflow.service jobbots-load-secrets.service
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/opt/jobbots/app/automation_monorepo
+EnvironmentFile=/etc/jobbots/secrets.env
+EnvironmentFile=/etc/jobbots/runtime.conf
+EnvironmentFile=-/etc/jobbots/runtime-prod-overrides.conf
+Environment=AUTOMATION_PYTHON=/opt/jobbots/venv/bin/python
+Environment=AUTOMATION_PROFILES_DIR=/srv/jobbots/browser_profiles
+Environment=BROWSER_VENDOR=nstbrowser
+Environment=RUN_IN_BACKGROUND=0
+Environment=MONGODB_URI=mongodb://127.0.0.1:27017
+Environment=JOBBOTS_MONGO_DATABASE=jobbots
+Environment=RESUME_WORKFLOW_URL=http://127.0.0.1:3001
+Environment=DISPLAY=:99
+Environment=PYTHONUNBUFFERED=1
+Environment=DISCOVERY_ENGINE=new
+Environment=KEEP_BROWSER=1
+Environment=NSTBROWSER_KEEP_ALIVE=1
+Environment=NSTBROWSER_FORBID_CREATE=1
+# Parallel apply workers (portal-sharded). Default: all portals, 4 workers.
+# NST profiles stay separate per portal; ATS is Playwright-only.
+ExecStart=/bin/bash -lc 'exec /usr/bin/xvfb-run -a --server-args="-screen 0 1280x1024x24" /opt/jobbots/venv/bin/python supervisor.py --stage apply --workers "${JOBBOTS_APPLICATION_WORKERS:-4}" --portal "${JOBBOTS_APPLY_PORTALS:-indeed,glassdoor,workopolis,linkedin,jobbank,google,greenhouse,lever,ashby,bamboohr}" --profile it'
+Restart=on-failure
+RestartSec=60
+TimeoutStopSec=180
+
+[Install]
+WantedBy=multi-user.target

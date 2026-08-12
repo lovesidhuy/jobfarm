@@ -1,0 +1,101 @@
+#!/usr/bin/env bash
+# ATS discovery hybrid (Phase I) — refill Greenhouse/Lever/Ashby/Bamboo queue.
+# Apply path is Playwright-only — no NST (see bots/google_it.py).
+#
+# Two phases so workers are not left empty while slow paths run:
+#   A) Fast HTTP: board_api + jobspipe + adzuna + firecrawl + tavily
+#   B) LinkedIn reverse-match (crossmatch) — more leads into same boards
+# Google JobSpy is OFF by default (429 / 0 results / multi-minute burn).
+set -euo pipefail
+
+export PATH="/opt/jobbots/venv/bin:/usr/local/bin:/usr/bin:${PATH:-}"
+export PYTHONPATH="/opt/jobbots/app/automation_monorepo${PYTHONPATH:+:$PYTHONPATH}"
+export DISCOVERY_ENGINE="${DISCOVERY_ENGINE:-new}"
+export MONGODB_URI="${MONGODB_URI:-mongodb://127.0.0.1:27017}"
+export JOBBOTS_MONGO_DATABASE="${JOBBOTS_MONGO_DATABASE:-jobbots}"
+export PYTHONUNBUFFERED=1
+export ATS_BOARD_API_ENABLED="${ATS_BOARD_API_ENABLED:-1}"
+export ATS_BOARD_API_TITLE_FILTER="${ATS_BOARD_API_TITLE_FILTER:-1}"
+export FIRECRAWL_ATS_ENABLED="${FIRECRAWL_ATS_ENABLED:-1}"
+export TAVILY_ATS_ENABLED="${TAVILY_ATS_ENABLED:-1}"
+export GOOGLE_CDP_FIRECRAWL_FALLBACK="${GOOGLE_CDP_FIRECRAWL_FALLBACK:-0}"
+export JOBSPIPE_ENABLED="${JOBSPIPE_ENABLED:-1}"
+export ADZUNA_ENABLED="${ADZUNA_ENABLED:-1}"
+export ATS_CROSSMATCH_ENABLED="${ATS_CROSSMATCH_ENABLED:-1}"
+export LINKEDIN_EXTERNAL_ATS_DISCOVERY="${LINKEDIN_EXTERNAL_ATS_DISCOVERY:-1}"
+
+ROOT="/opt/jobbots/app/automation_monorepo"
+cd "$ROOT"
+
+# Ensure slug registry is healthy (board_api + crossmatch need it).
+# Seeds artifact → Mongo (correct jobbots DB) and harvests URLs from apply queue.
+/opt/jobbots/venv/bin/python - <<'PY' || true
+import os, sys, json
+sys.path.insert(0, "/opt/jobbots/app/automation_monorepo")
+os.environ.setdefault("MONGODB_URI", "mongodb://127.0.0.1:27017")
+os.environ.setdefault("JOBBOTS_MONGO_DATABASE", "jobbots")
+from core.discovery.registry_growth import ensure_registry_ready
+report = ensure_registry_ready(min_active=20)
+print("[jobbots-discover-ats-it] registry", json.dumps(report, default=str))
+PY
+
+if [ -z "${JOBBOTS_ATS_IT_KEYWORDS:-}" ]; then
+  JOBBOTS_ATS_IT_KEYWORDS="$(/opt/jobbots/venv/bin/python - <<'PY'
+from pathlib import Path
+import importlib.util
+p = Path("/opt/jobbots/app/automation_monorepo/config/it/hero_terms.py")
+spec = importlib.util.spec_from_file_location("it_hero_terms", p)
+m = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(m)
+prefer = (
+    "IT Support", "Help Desk", "Service Desk", "Desktop Support",
+    "QA Analyst", "QA Engineer", "SDET", "Systems Administrator",
+    "IT Analyst", "Junior Software", "Software Developer Intern",
+    "IT Co-op", "IT Intern", "Data Analyst", "Application Support",
+    "Technical Support", "Junior Systems", "Network Support",
+)
+terms = list(getattr(m, "PORTAL_CORE_TERMS", None) or m.HERO_SEARCH_TERMS)
+seen = set()
+out = []
+for t in prefer:
+    for h in terms:
+        if t.lower() in h.lower() and h not in seen:
+            out.append(h); seen.add(h)
+for h in terms:
+    if h not in seen:
+        out.append(h); seen.add(h)
+# More terms = more JobsPipe/Adzuna/Firecrawl/Tavily coverage per tick
+print(",".join(out[:28]))
+PY
+)"
+fi
+
+MAX="${JOBBOTS_ATS_MAX_RESULTS:-40}"
+FRESH="${JOBBOTS_DISCOVERY_FRESHNESS_DAYS:-7}"
+PY=(/opt/jobbots/venv/bin/python scripts/discovery_runner.py)
+
+# Phase A — fast HTTP hybrid (fills queue in seconds–minutes, no Google)
+FAST_PORTALS="ats_board_api,jobspipe,adzuna,firecrawl_ats,tavily_ats"
+echo "[jobbots-discover-ats-it] phase=A_fast portals=$FAST_PORTALS keywords=$(echo "$JOBBOTS_ATS_IT_KEYWORDS" | awk -F, '{print NF}') max=$MAX freshness=${FRESH}d"
+"${PY[@]}" \
+  --profile it --portals "$FAST_PORTALS" --keyword "$JOBBOTS_ATS_IT_KEYWORDS" \
+  --max-results "$MAX" --freshness-days "$FRESH" || true
+
+# Phase B — LinkedIn reverse slug/title match into GH/Lever boards
+if [ "${ATS_CROSSMATCH_ENABLED:-1}" = "1" ]; then
+  echo "[jobbots-discover-ats-it] phase=B_crossmatch portals=ats_crossmatch"
+  "${PY[@]}" \
+    --profile it --portals ats_crossmatch --keyword "$JOBBOTS_ATS_IT_KEYWORDS" \
+    --max-results "${ATS_CROSSMATCH_MAX_PER_TERM:-50}" --freshness-days "$FRESH" || true
+fi
+
+# Optional expensive Google (off in prod overrides)
+if [ "${JOBBOTS_ATS_INCLUDE_GOOGLE:-0}" = "1" ]; then
+  echo "[jobbots-discover-ats-it] phase=C_google (opt-in)"
+  /usr/bin/xvfb-run -a --server-args="-screen 0 1280x1024x24" \
+    "${PY[@]}" \
+    --profile it --portals google --keyword "$JOBBOTS_ATS_IT_KEYWORDS" \
+    --max-results "$MAX" --freshness-days "$FRESH" || true
+fi
+
+echo "[jobbots-discover-ats-it] done hybrid refill"

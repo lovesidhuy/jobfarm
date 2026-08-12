@@ -1,0 +1,14 @@
+{
+  "unique_key": "test_job_123",
+  "url": "https://example.com/job",
+  "method": "GET",
+  "payload": null,
+  "headers": {},
+  "user_data": {
+    "title": "Test Job"
+  },
+  "retry_count": 0,
+  "no_retry": false,
+  "loaded_url": null,
+  "handled_at": null
+}

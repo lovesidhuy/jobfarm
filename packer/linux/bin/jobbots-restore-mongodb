@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+set -euo pipefail
+source /etc/jobbots/runtime.conf
+: "${JOBBOTS_ARTIFACT_BUCKET:?JOBBOTS_ARTIFACT_BUCKET is required}"
+: "${JOBBOTS_ARTIFACT_PREFIX:?JOBBOTS_ARTIFACT_PREFIX is required}"
+backup_key="${1:?S3 MongoDB backup key is required}"
+[[ "$backup_key" == "${JOBBOTS_ARTIFACT_PREFIX}/"* ]] || {
+  echo "Backup key is outside the configured environment prefix." >&2
+  exit 1
+}
+archive="/srv/jobbots/application/recovery/mongodb.archive.gz"
+install -d -m 0750 "$(dirname "$archive")"
+aws s3 cp "s3://${JOBBOTS_ARTIFACT_BUCKET}/${backup_key}" "$archive" --only-show-errors
+expected="$(aws s3api head-object --bucket "$JOBBOTS_ARTIFACT_BUCKET" --key "$backup_key" --query 'Metadata.sha256' --output text)"
+test "$(sha256sum "$archive" | awk '{print $1}')" = "$expected"
+systemctl restart jobbots-mongodb.service
+for _ in $(seq 1 60); do
+  docker exec -i jobbots-mongodb mongosh --quiet --eval 'db.runCommand({ping:1}).ok' | grep -q 1 && break
+  sleep 2
+done
+docker exec -i jobbots-mongodb mongorestore --drop --archive --gzip <"$archive"

@@ -1,0 +1,8 @@
+[Unit]
+Description=Sync jobbots artifacts to S3
+Requires=jobbots-persistent-volume.service
+After=jobbots-persistent-volume.service network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/opt/jobbots/bin/jobbots-artifact-sync

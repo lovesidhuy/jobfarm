@@ -1,0 +1,22 @@
+[Unit]
+Description=Jobbots resume tailoring service
+Requires=jobbots-load-secrets.service
+After=network-online.target jobbots-load-secrets.service
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/opt/jobbots/app/resume_workflow
+EnvironmentFile=/etc/jobbots/secrets.env
+EnvironmentFile=/etc/jobbots/runtime.conf
+Environment=NODE_ENV=production
+Environment=PORT=3001
+Environment=JOBBOTS_MONGO_DATABASE=jobbots
+ExecStart=/usr/bin/node server.js
+Restart=on-failure
+RestartSec=15
+TimeoutStopSec=60
+
+[Install]
+WantedBy=multi-user.target

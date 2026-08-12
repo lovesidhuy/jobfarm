@@ -1,0 +1,45 @@
+# Local infrastructure only. Production bots run on the Windows VM via
+# automation_monorepo/supervisor.py (not Docker). Bot code lives under
+# automation_monorepo/ and master/Auto_job_applier_linkedIn_*.
+
+services:
+  mongodb:
+    image: mongo:7.0
+    container_name: automation-mongodb
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: admin
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGODB_PASSWORD:-changeme}
+    volumes:
+      - mongodb_data:/data/db
+      - ./docker/mongodb/init:/docker-entrypoint-initdb.d
+    networks:
+      - automation-network
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: automation-ollama
+    restart: unless-stopped
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    environment:
+      - OLLAMA_HOST=0.0.0.0
+      - OLLAMA_NUM_PARALLEL=${OLLAMA_NUM_PARALLEL:-4}
+    networks:
+      - automation-network
+    profiles:
+      - llm
+
+volumes:
+  mongodb_data:
+    driver: local
+  ollama_data:
+    driver: local
+
+networks:
+  automation-network:
+    driver: bridge

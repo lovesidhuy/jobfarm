@@ -1,0 +1,106 @@
+name: Emergency Recover MongoDB to Temporary EBS
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_environment:
+        description: Protected GitHub environment
+        required: true
+        type: choice
+        options: [canary, production]
+      backup_key:
+        description: Exact environment-scoped S3 MongoDB backup key
+        required: true
+        type: string
+      confirm_resource_prefix:
+        description: Exact RESOURCE_PREFIX
+        required: true
+        type: string
+      expected_canary_record_id:
+        description: Required for canary restore verification
+        required: false
+        default: ''
+        type: string
+      delete_temporary_volume_after_verification:
+        description: Delete the temporary recovery volume after verification; canary only
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: linux-lifecycle-${{ inputs.target_environment }}
+  cancel-in-progress: false
+
+jobs:
+  recover:
+    environment: ${{ inputs.target_environment }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+      - name: Assert recovery target
+        run: |
+          bash .github/scripts/assert-linux-target.sh
+          test "$CONFIRM_RESOURCE_PREFIX" = "$RESOURCE_PREFIX"
+          [[ "$BACKUP_KEY" == "$ARTIFACT_PREFIX/"* ]]
+          if [ "$TARGET_ENVIRONMENT" = "canary" ]; then
+            test -n "$EXPECTED_CANARY_RECORD_ID"
+          else
+            test "$DELETE_TEMPORARY" = "false"
+          fi
+        env:
+          TARGET_ENVIRONMENT: ${{ inputs.target_environment }}
+          RESOURCE_PREFIX: ${{ vars.RESOURCE_PREFIX }}
+          CONFIRM_RESOURCE_PREFIX: ${{ inputs.confirm_resource_prefix }}
+          VM_NAME: ${{ vars.VM_NAME }}
+          ARTIFACT_PREFIX: ${{ vars.ARTIFACT_PREFIX }}
+          BACKUP_KEY: ${{ inputs.backup_key }}
+          EXPECTED_CANARY_RECORD_ID: ${{ inputs.expected_canary_record_id }}
+          DELETE_TEMPORARY: ${{ inputs.delete_temporary_volume_after_verification }}
+      - name: Create temporary encrypted recovery volume
+        id: recovery
+        run: |
+          set -euo pipefail
+          vm_id="$(aws ec2 describe-instances --filters "Name=tag:ResourcePrefix,Values=$RESOURCE_PREFIX" "Name=tag:Ephemeral,Values=true" "Name=instance-state-name,Values=running" --query 'Reservations[0].Instances[0].InstanceId' --output text)"
+          test -n "$vm_id" && test "$vm_id" != "None"
+          volume_id="$(aws ec2 create-volume --availability-zone "$AVAILABILITY_ZONE" --size 20 --volume-type gp3 --encrypted --tag-specifications "ResourceType=volume,Tags=[{Key=Project,Value=jobbots},{Key=ResourcePrefix,Value=$RESOURCE_PREFIX},{Key=Recovery,Value=true},{Key=Disposable,Value=true}]" --query VolumeId --output text)"
+          aws ec2 wait volume-available --volume-ids "$volume_id"
+          aws ec2 attach-volume --volume-id "$volume_id" --instance-id "$vm_id" --device /dev/sdg >/dev/null
+          aws ec2 wait volume-in-use --volume-ids "$volume_id"
+          echo "vm_id=$vm_id" >> "$GITHUB_OUTPUT"
+          echo "volume_id=$volume_id" >> "$GITHUB_OUTPUT"
+        env:
+          RESOURCE_PREFIX: ${{ vars.RESOURCE_PREFIX }}
+          AVAILABILITY_ZONE: ${{ vars.AVAILABILITY_ZONE }}
+
+      - name: Restore and verify MongoDB backup on temporary volume
+        run: |
+          set -euo pipefail
+          bucket_arn="$(aws resourcegroupstaggingapi get-resources --resource-type-filters s3 --tag-filters Key=ResourcePrefix,Values="$RESOURCE_PREFIX" --query 'ResourceTagMappingList[0].ResourceARN' --output text)"
+          test -n "$bucket_arn" && test "$bucket_arn" != "None"
+          bucket="${bucket_arn#arn:aws:s3:::}"
+          command="$(printf 'sudo /opt/jobbots/bin/jobbots-restore-temporary %q %q %q %q' "$VOLUME_ID" "$bucket" "$BACKUP_KEY" "$EXPECTED_CANARY_RECORD_ID")"
+          .github/scripts/ssm-run.sh "$VM_ID" "$command"
+        env:
+          RESOURCE_PREFIX: ${{ vars.RESOURCE_PREFIX }}
+          BACKUP_KEY: ${{ inputs.backup_key }}
+          EXPECTED_CANARY_RECORD_ID: ${{ inputs.expected_canary_record_id }}
+          VM_ID: ${{ steps.recovery.outputs.vm_id }}
+          VOLUME_ID: ${{ steps.recovery.outputs.volume_id }}
+
+      - name: Delete verified temporary canary recovery volume
+        if: inputs.target_environment == 'canary' && inputs.delete_temporary_volume_after_verification
+        run: |
+          aws ec2 detach-volume --volume-id "$VOLUME_ID" --instance-id "$VM_ID"
+          aws ec2 wait volume-available --volume-ids "$VOLUME_ID"
+          aws ec2 delete-volume --volume-id "$VOLUME_ID"
+        env:
+          VM_ID: ${{ steps.recovery.outputs.vm_id }}
+          VOLUME_ID: ${{ steps.recovery.outputs.volume_id }}

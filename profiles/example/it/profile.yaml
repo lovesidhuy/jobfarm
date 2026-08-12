@@ -1,0 +1,19 @@
+# Template IT profile (Network Administration, Cloud, QA, Systems Support)
+
+owner: example
+name: it
+job_profile: IT
+bot_name: indeed_it
+
+config_module: config.it
+
+answer_bank: data/qa_banks/it_job_application_qa_bank.json
+
+resumes:
+  default: profiles/resumes/sample_resume_it.pdf
+  cover_letter: profiles/resumes/sample_cover_letter_it.pdf
+
+portals: [indeed, glassdoor, workopolis, linkedin, jobbank, google, greenhouse, ashby, lever]
+
+env:
+  INDEED_BASE_URL: https://ca.indeed.com

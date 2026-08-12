@@ -1,0 +1,293 @@
+name: Production Cleanup
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: 'Run ID'
+        required: true
+        type: string
+      completion_marker_key:
+        description: 'S3 Key of the completion marker'
+        required: true
+        type: string
+      status:
+        description: 'Status of the run'
+        required: true
+        type: string
+      bucket:
+        description: 'S3 Bucket of the completion marker'
+        required: true
+        type: string
+  repository_dispatch:
+    types: [production-cleanup]
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: linux-lifecycle-production
+  cancel-in-progress: false
+
+jobs:
+  cleanup:
+    name: Destroy Compute Worker
+    environment: production
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+        env:
+          AWS_REGION: ${{ vars.AWS_REGION }}
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.8.0"
+      - name: Assert protected inputs
+        run: |
+          bash .github/scripts/assert-linux-target.sh
+        env:
+          TARGET_ENVIRONMENT: production
+          RESOURCE_PREFIX: ${{ vars.RESOURCE_PREFIX }}
+          VM_NAME: ${{ vars.VM_NAME }}
+          ARTIFACT_PREFIX: ${{ vars.ARTIFACT_PREFIX }}
+          
+      - name: Resolve Inputs
+        id: resolve
+        env:
+          DISPATCH_RUN_ID: ${{ inputs.run_id }}
+          DISPATCH_COMPLETION_MARKER_KEY: ${{ inputs.completion_marker_key }}
+          DISPATCH_STATUS: ${{ inputs.status }}
+          DISPATCH_BUCKET: ${{ inputs.bucket }}
+          ARTIFACT_PREFIX: ${{ vars.ARTIFACT_PREFIX }}
+          RESOURCE_PREFIX: ${{ vars.RESOURCE_PREFIX }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import os
+          import re
+
+          event_name = os.environ["GITHUB_EVENT_NAME"]
+          if event_name == "repository_dispatch":
+              with open(os.environ["GITHUB_EVENT_PATH"], encoding="utf-8") as event_file:
+                  payload = json.load(event_file).get("client_payload", {})
+              values = {
+                  "run_id": payload.get("run_id", ""),
+                  "completion_marker_key": payload.get("completion_marker_key", ""),
+                  "status": payload.get("status", ""),
+                  "bucket": payload.get("bucket", ""),
+              }
+          else:
+              values = {
+                  "run_id": os.environ.get("DISPATCH_RUN_ID", ""),
+                  "completion_marker_key": os.environ.get("DISPATCH_COMPLETION_MARKER_KEY", ""),
+                  "status": os.environ.get("DISPATCH_STATUS", ""),
+                  "bucket": os.environ.get("DISPATCH_BUCKET", ""),
+              }
+
+          for name, value in values.items():
+              if not isinstance(value, str) or not value or "\n" in value or "\r" in value:
+                  raise SystemExit(f"Invalid or missing cleanup input: {name}")
+
+          run_id = values["run_id"]
+          key = values["completion_marker_key"]
+          status = values["status"]
+          bucket = values["bucket"]
+          artifact_prefix = os.environ["ARTIFACT_PREFIX"].strip("/")
+          resource_prefix = os.environ["RESOURCE_PREFIX"]
+
+          if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", run_id):
+              raise SystemExit("Run ID has an invalid format")
+          if status not in {"failed", "success"}:
+              raise SystemExit("Status must be exactly 'failed' or 'success'")
+          if not re.fullmatch(r"[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]", bucket):
+              raise SystemExit("Bucket has an invalid S3 bucket-name format")
+          if not bucket.startswith(f"{resource_prefix}-artifacts-"):
+              raise SystemExit("Bucket does not belong to the protected production resource prefix")
+
+          expected_key = f"{artifact_prefix}/completion/marker-{run_id}.json"
+          if key != expected_key:
+              raise SystemExit(f"Marker key does not match the run ID and protected artifact prefix; expected {expected_key}")
+
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              for name, value in values.items():
+                  output.write(f"{name}={value}\n")
+
+          print(f"Validated cleanup inputs for run {run_id} with status {status}.")
+          print(f"Validated marker location: s3://{bucket}/{key}")
+          PY
+
+      - name: Verify Completion Marker Signature
+        run: |
+          python -c '
+          import os
+          import json
+          import hmac
+          import hashlib
+          import boto3
+
+          marker_key = os.environ["COMPLETION_MARKER_KEY"]
+          bucket = os.environ["JOBBOTS_ARTIFACT_BUCKET"]
+          secret_name = os.environ["SECRET_NAME"]
+
+          s3 = boto3.client("s3")
+          sm = boto3.client("secretsmanager")
+
+          try:
+              secret_val = json.loads(sm.get_secret_value(SecretId=secret_name)["SecretString"])
+              api_key = secret_val.get("NSTBROWSER_API_KEY")
+          except Exception as e:
+              print(f"Error fetching secret: {e}")
+              exit(1)
+
+          if not api_key:
+              print("NSTBROWSER_API_KEY not found in secret")
+              exit(1)
+
+          try:
+              obj = s3.get_object(Bucket=bucket, Key=marker_key)
+              marker = json.loads(obj["Body"].read().decode("utf-8"))
+          except Exception as e:
+              print(f"Error reading S3 key: {e}")
+              exit(1)
+
+          run_id = marker.get("run_id")
+          timestamp = marker.get("timestamp")
+          status = marker.get("status")
+          signature = marker.get("signature")
+          expected_run_id = os.environ["EXPECTED_RUN_ID"]
+          expected_status = os.environ["EXPECTED_STATUS"]
+
+          if not all([run_id, timestamp, status, signature]):
+              print("Invalid marker JSON structure")
+              exit(1)
+
+          if run_id != expected_run_id or status != expected_status:
+              print("Completion marker fields do not match the validated cleanup inputs")
+              exit(1)
+
+          message = f"{run_id}:{timestamp}:{status}"
+          expected_sig = hmac.new(api_key.encode("utf-8"), message.encode("utf-8"), hashlib.sha256).hexdigest()
+
+          if not hmac.compare_digest(signature, expected_sig):
+              print("HMAC verification failed! Signature mismatch.")
+              exit(1)
+
+          print("HMAC signature verified successfully. Proceeding with cleanup.")
+          '
+        env:
+          COMPLETION_MARKER_KEY: ${{ steps.resolve.outputs.completion_marker_key }}
+          JOBBOTS_ARTIFACT_BUCKET: ${{ steps.resolve.outputs.bucket }}
+          EXPECTED_RUN_ID: ${{ steps.resolve.outputs.run_id }}
+          EXPECTED_STATUS: ${{ steps.resolve.outputs.status }}
+          SECRET_NAME: ${{ vars.RESOURCE_PREFIX }}/runtime
+
+      - name: Initialize environment state
+        run: |
+          terraform -chdir=terraform/persistent init -reconfigure \
+            -backend-config="bucket=$TF_STATE_BUCKET" \
+            -backend-config="region=$AWS_REGION" \
+            -backend-config="key=${RESOURCE_PREFIX}/persistent.tfstate"
+          ami="$(aws ec2 describe-instances --filters "Name=tag:ResourcePrefix,Values=$RESOURCE_PREFIX" "Name=tag:Ephemeral,Values=true" "Name=instance-state-name,Values=pending,running,stopping,stopped" --query 'Reservations[0].Instances[0].ImageId' --output text)"
+          if [ -n "$ami" ] && [ "$ami" != "None" ]; then
+            .github/scripts/write-worker-tfvars.sh "$ami"
+            terraform -chdir=terraform init -reconfigure \
+              -backend-config="bucket=$TF_STATE_BUCKET" \
+              -backend-config="region=$AWS_REGION" \
+              -backend-config="key=${RESOURCE_PREFIX}/worker.tfstate"
+          fi
+        env:
+          TARGET_ENVIRONMENT: production
+          RESOURCE_PREFIX: ${{ vars.RESOURCE_PREFIX }}
+          VM_NAME: ${{ vars.VM_NAME }}
+          ARTIFACT_PREFIX: ${{ vars.ARTIFACT_PREFIX }}
+          AWS_REGION: ${{ vars.AWS_REGION }}
+          AVAILABILITY_ZONE: ${{ vars.AVAILABILITY_ZONE }}
+          TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+
+      - name: Run fail-closed shutdown and backup
+        run: |
+          set -euo pipefail
+          worker_state="$(aws ec2 describe-instances --filters "Name=tag:ResourcePrefix,Values=$RESOURCE_PREFIX" "Name=tag:Ephemeral,Values=true" "Name=instance-state-name,Values=pending,running,stopping,stopped" --query 'Reservations[0].Instances[0].State.Name' --output text)"
+          if [ -n "$worker_state" ] && [ "$worker_state" != "None" ] && [ "$worker_state" != "running" ]; then
+            echo "Disposable worker exists in state '$worker_state'; refusing to destroy before a verified backup." >&2
+            exit 1
+          fi
+          vm_id="$(aws ec2 describe-instances --filters "Name=tag:ResourcePrefix,Values=$RESOURCE_PREFIX" "Name=tag:Ephemeral,Values=true" "Name=instance-state-name,Values=running" --query 'Reservations[0].Instances[0].InstanceId' --output text)"
+          if [ -n "$vm_id" ] && [ "$vm_id" != "None" ]; then
+            actual_prefix="$(aws ec2 describe-instances --instance-ids "$vm_id" --query 'Reservations[0].Instances[0].Tags[?Key==`ResourcePrefix`].Value|[0]' --output text)"
+            test "$actual_prefix" = "$RESOURCE_PREFIX"
+            
+            # Wait for SSM agent to be online first (in case it wasn't online before)
+            for i in $(seq 1 12); do
+              STATUS=$(aws ssm describe-instance-information --filters "Key=InstanceIds,Values=$vm_id" --query "InstanceInformationList[0].PingStatus" --output text 2>/dev/null || echo "None")
+              if [ "$STATUS" = "Online" ]; then break; fi
+              sleep 10
+            done
+            
+            .github/scripts/ssm-run.sh "$vm_id" 'sudo /opt/jobbots/bin/jobbots-prepare-destroy'
+          fi
+        env:
+          RESOURCE_PREFIX: ${{ vars.RESOURCE_PREFIX }}
+
+      - name: Detach and verify persistent EBS
+        run: |
+          set -euo pipefail
+          volume_id="$(terraform -chdir=terraform/persistent output -raw persistent_volume_id 2>/dev/null || aws ec2 describe-volumes --filters "Name=tag:ResourcePrefix,Values=$RESOURCE_PREFIX" "Name=tag:Persistent,Values=true" --query 'Volumes[0].VolumeId' --output text)"
+          if [ -n "$volume_id" ] && [ "$volume_id" != "None" ]; then
+            terraform -chdir=terraform destroy -auto-approve -target=aws_volume_attachment.persistent -lock-timeout=300s || true
+            aws ec2 wait volume-available --volume-ids "$volume_id"
+            test "$(aws ec2 describe-volumes --volume-ids "$volume_id" --query 'Volumes[0].State' --output text)" = "available"
+          fi
+        env:
+          AWS_REGION: ${{ vars.AWS_REGION }}
+          TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+          TARGET_ENVIRONMENT: production
+          RESOURCE_PREFIX: ${{ vars.RESOURCE_PREFIX }}
+          VM_NAME: ${{ vars.VM_NAME }}
+          ARTIFACT_PREFIX: ${{ vars.ARTIFACT_PREFIX }}
+          AVAILABILITY_ZONE: ${{ vars.AVAILABILITY_ZONE }}
+
+      - name: Destroy disposable worker resources only
+        run: |
+          set -euo pipefail
+          if [ -d terraform/.terraform ]; then
+            terraform -chdir=terraform destroy -auto-approve -lock-timeout=300s
+          fi
+        env:
+          AWS_REGION: ${{ vars.AWS_REGION }}
+          TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+          TARGET_ENVIRONMENT: production
+          RESOURCE_PREFIX: ${{ vars.RESOURCE_PREFIX }}
+          VM_NAME: ${{ vars.VM_NAME }}
+          ARTIFACT_PREFIX: ${{ vars.ARTIFACT_PREFIX }}
+          AVAILABILITY_ZONE: ${{ vars.AVAILABILITY_ZONE }}
+
+      - name: Verify worker destroyed and persistent resources retained
+        run: |
+          set -euo pipefail
+          ephemeral_count="$(aws ec2 describe-instances \
+            --filters "Name=tag:ResourcePrefix,Values=$RESOURCE_PREFIX" "Name=tag:Ephemeral,Values=true" "Name=instance-state-name,Values=pending,running,stopping,stopped,shutting-down" \
+            --query 'length(Reservations[].Instances[])' --output text)"
+          test "$ephemeral_count" = "0"
+
+          volume_id="$(terraform -chdir=terraform/persistent output -raw persistent_volume_id)"
+          test "$(aws ec2 describe-volumes --volume-ids "$volume_id" --query 'Volumes[0].State' --output text)" = "available"
+          test "$(aws ec2 describe-volumes --volume-ids "$volume_id" --query 'Volumes[0].Tags[?Key==`Persistent`].Value|[0]' --output text)" = "true"
+
+          artifact_bucket="$(terraform -chdir=terraform/persistent output -raw artifact_bucket_name)"
+          runtime_secret="$(terraform -chdir=terraform/persistent output -raw runtime_secret_name)"
+          profile_table="$(terraform -chdir=terraform/persistent output -raw profile_lease_table_name)"
+          aws s3api head-bucket --bucket "$artifact_bucket"
+          aws secretsmanager describe-secret --secret-id "$runtime_secret" >/dev/null
+          aws dynamodb describe-table --table-name "$profile_table" >/dev/null
+          aws s3api head-object --bucket "$TF_STATE_BUCKET" --key "${RESOURCE_PREFIX}/persistent.tfstate" >/dev/null
+          aws s3api head-object --bucket "$TF_STATE_BUCKET" --key "${RESOURCE_PREFIX}/worker.tfstate" >/dev/null
+          echo "Disposable worker is gone and protected persistent resources remain."
+        env:
+          RESOURCE_PREFIX: ${{ vars.RESOURCE_PREFIX }}
+          TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}

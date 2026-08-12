@@ -1,0 +1,14 @@
+[Unit]
+Description=Jobbots Greenhouse, Lever, Ashby, and BambooHR discovery timer
+Requires=jobbots-discover-ats.service
+
+[Timer]
+OnBootSec=8min
+# Refill ATS apply queue more often — Playwright workers idle when empty.
+OnUnitActiveSec=40min
+AccuracySec=1min
+Persistent=true
+Unit=jobbots-discover-ats.service
+
+[Install]
+WantedBy=timers.target

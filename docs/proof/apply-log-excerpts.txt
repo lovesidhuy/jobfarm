@@ -1,0 +1,69 @@
+# Production journal excerpts — real success signals
+# (no emails/profile IDs)
+
+Aug 11 23:22:17 jobbots-production-13-worker bash[623842]: [BOT TRACE] ✅ Application confirmed by LinkedIn success UI.
+Aug 11 23:24:45 jobbots-production-13-worker bash[625484]: [BOT TRACE] ✅ Application confirmed by LinkedIn success UI.
+Aug 11 23:27:02 jobbots-production-13-worker bash[626737]: [BOT TRACE] ✅ Application confirmed by LinkedIn success UI.
+Aug 11 23:35:22 jobbots-production-13-worker bash[630514]: [BOT TRACE] ✅ Application confirmed by LinkedIn success UI.
+Aug 11 23:52:15 jobbots-production-13-worker bash[640674]: [Indeed] ✓ Login detected on homepage (existing session).
+Aug 11 23:53:16 jobbots-production-13-worker bash[641256]: [Indeed] ✓ Login detected on homepage (existing session).
+Aug 11 23:54:18 jobbots-production-13-worker bash[642463]: [Indeed] ✓ Login detected on homepage (existing session).
+Aug 11 23:54:39 jobbots-production-13-worker bash[642581]: [Indeed] ✓ Login detected on homepage (existing session).
+Aug 11 23:55:37 jobbots-production-13-worker bash[642463]:   [SmartApply] ✓ Application submitted!
+Aug 11 23:55:58 jobbots-production-13-worker bash[643579]: [Indeed] ✓ Login detected on homepage (existing session).
+Aug 11 23:57:12 jobbots-production-13-worker bash[642581]:   [SmartApply] ✓ Application submitted!
+Aug 11 23:57:43 jobbots-production-13-worker bash[643579]:   [SmartApply] ✓ Application submitted!
+Aug 11 23:57:43 jobbots-production-13-worker bash[644263]: [Indeed] ✓ Login detected on homepage (existing session).
+Aug 11 23:58:04 jobbots-production-13-worker bash[644579]: [Indeed] ✓ Login detected on homepage (existing session).
+Aug 11 23:59:41 jobbots-production-13-worker bash[644579]:   [SmartApply] ✓ Application submitted!
+Aug 12 00:00:00 jobbots-production-13-worker bash[645429]: [Indeed] ✓ Login detected on homepage (existing session).
+Aug 12 00:00:23 jobbots-production-13-worker bash[644263]:   [SmartApply] ✓ Application submitted!
+Aug 12 00:01:02 jobbots-production-13-worker bash[645834]: [Indeed] ✓ Login detected on homepage (existing session).
+Aug 12 00:01:52 jobbots-production-13-worker bash[646296]: [Indeed] ✓ Login detected on homepage (existing session).
+Aug 12 00:01:53 jobbots-production-13-worker bash[645429]:   [SmartApply] ✓ Application submitted!
+Aug 12 00:01:54 jobbots-production-13-worker bash[646294]: [Indeed] ✓ Login detected on homepage (existing session).
+Aug 12 00:02:15 jobbots-production-13-worker bash[646482]: [Indeed] ✓ Login detected on homepage (existing session).
+Aug 12 00:02:48 jobbots-production-13-worker bash[646941]: [Indeed] ✓ Login detected on homepage (existing session).
+Aug 12 00:05:17 jobbots-production-13-worker bash[646482]:   [SmartApply] ✓ Application submitted!
+Aug 12 00:05:23 jobbots-production-13-worker bash[647527]: [Indeed] ✓ Login detected on homepage (existing session).
+Aug 12 00:05:36 jobbots-production-13-worker bash[647613]: [Indeed] ✓ Login detected on homepage (existing session).
+Aug 12 00:07:25 jobbots-production-13-worker bash[648108]: [Indeed] ✓ Login detected on homepage (existing session).
+Aug 12 00:08:26 jobbots-production-13-worker bash[648028]:   [SmartApply] ✓ Application submitted!
+Aug 12 00:08:54 jobbots-production-13-worker bash[648431]: [Indeed] ✓ Login detected on homepage (existing session).
+Aug 12 00:11:36 jobbots-production-13-worker bash[648431]:   [SmartApply] ✓ Application submitted!
+Aug 12 00:11:40 jobbots-production-13-worker bash[648108]:   [SmartApply] ✓ Application submitted!
+Aug 12 00:13:21 jobbots-production-13-worker bash[649596]: [Indeed] ✓ Login detected on homepage (existing session).
+Aug 12 00:14:55 jobbots-production-13-worker bash[649596]:   [SmartApply] ✓ Application submitted!
+Aug 12 00:15:48 jobbots-production-13-worker bash[650254]: [Indeed] ✓ Login detected on homepage (existing session).
+Aug 12 00:17:18 jobbots-production-13-worker bash[650254]:   [SmartApply] ✓ Application submitted!
+Aug 12 00:18:07 jobbots-production-13-worker bash[651007]: [Indeed] ✓ Login detected on homepage (existing session).
+Aug 12 00:28:01 jobbots-production-13-worker bash[653737]: [Indeed] ✓ Login detected on homepage (existing session).
+Aug 12 00:34:51 jobbots-production-13-worker bash[653737]:   [SmartApply] ✓ Application submitted!
+Aug 12 00:37:24 jobbots-production-13-worker bash[656925]: [BOT TRACE] ✅ Application confirmed by LinkedIn success UI.
+Aug 12 00:39:53 jobbots-production-13-worker bash[660243]: [Indeed] ✓ Login detected on homepage (existing session).
+Aug 12 00:40:47 jobbots-production-13-worker bash[661302]: [Indeed] ✓ Login detected on homepage (existing session).
+Aug 12 00:42:08 jobbots-production-13-worker bash[661769]: [BOT TRACE] ✅ Application confirmed by LinkedIn success UI.
+Aug 12 00:45:51 jobbots-production-13-worker bash[663975]: [BOT TRACE] ✅ Application confirmed by LinkedIn success UI.
+Aug 12 00:47:03 jobbots-production-13-worker bash[664479]: [BOT TRACE] ✅ Application confirmed by LinkedIn success UI.
+Aug 12 01:57:32 jobbots-production-13-worker bash[708259]: [BOT TRACE] ✅ Application confirmed by LinkedIn success UI.
+Aug 12 02:27:54 jobbots-production-13-worker bash[724459]: [Indeed] ✓ Login detected on homepage (existing session).
+Aug 12 02:28:36 jobbots-production-13-worker bash[724614]: [Indeed] ✓ Login detected on homepage (existing session).
+Aug 12 02:31:33 jobbots-production-13-worker bash[724459]:   [SmartApply] ✓ Application submitted!
+Aug 12 02:31:37 jobbots-production-13-worker bash[724614]:   [SmartApply] ✓ Application submitted!
+Aug 12 02:32:02 jobbots-production-13-worker bash[727047]: [Indeed] ✓ Login detected on homepage (existing session).
+Aug 12 02:32:17 jobbots-production-13-worker bash[727120]: [Indeed] ✓ Login detected on homepage (existing session).
+Aug 12 02:34:24 jobbots-production-13-worker bash[727047]:   [SmartApply] ✓ Application submitted!
+Aug 12 02:34:49 jobbots-production-13-worker bash[728359]: [Indeed] ✓ Login detected on homepage (existing session).
+Aug 12 02:35:00 jobbots-production-13-worker bash[727120]:   [SmartApply] ✓ Application submitted!
+Aug 12 02:35:18 jobbots-production-13-worker bash[728525]: [Indeed] ✓ Login detected on homepage (existing session).
+Aug 12 02:35:39 jobbots-production-13-worker bash[728625]: [Indeed] ✓ Login detected on homepage (existing session).
+Aug 12 02:36:30 jobbots-production-13-worker bash[728525]:   [SmartApply] ✓ Application submitted!
+Aug 12 02:36:50 jobbots-production-13-worker bash[729216]: [Indeed] ✓ Login detected on homepage (existing session).
+Aug 12 02:38:50 jobbots-production-13-worker bash[730093]: [Indeed] ✓ Login detected on homepage (existing session).
+Aug 12 02:39:00 jobbots-production-13-worker bash[729830]:   [SmartApply] ✓ Application submitted!
+Aug 12 02:39:21 jobbots-production-13-worker bash[730374]: [Indeed] ✓ Login detected on homepage (existing session).
+Aug 12 02:40:27 jobbots-production-13-worker bash[730716]: [Indeed] ✓ Login detected on homepage (existing session).
+Aug 12 02:43:44 jobbots-production-13-worker bash[732535]: [Indeed] ✓ Login detected on homepage (existing session).
+Aug 12 02:45:52 jobbots-production-13-worker bash[733338]: [Indeed] ✓ Login detected on homepage (existing session).
+Aug 12 02:48:51 jobbots-production-13-worker bash[733338]:   [SmartApply] ✓ Application submitted!
+Aug 12 02:49:26 jobbots-production-13-worker bash[734749]: [Indeed] ✓ Login detected on homepage (existing session).

@@ -1,0 +1,17 @@
+gcp_project_id        = "your-gcp-project-id"
+gcp_region            = "us-west1"
+gcp_zone              = "us-west1-a"
+vm_name               = "jobbots-dev-vm"
+machine_type          = "e2-standard-4"
+boot_disk_size_gb     = 64
+golden_image_family   = "ubuntu-2404-lts-amd64"
+golden_image_project  = "ubuntu-os-cloud"
+vm_admin_password     = "change-me-immediately"
+allowed_rdp_ip_v4     = "203.0.113.1/32"
+
+# AWS backend integration
+aws_region            = "us-west-2"
+profile_lease_table_name = "jobbots-canary-profile-leases"
+artifact_bucket_name  = "jobbots-canary-artifacts"
+artifact_prefix       = "canary"
+runtime_secret_name   = "jobbots-canary/runtime"

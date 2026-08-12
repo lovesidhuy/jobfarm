@@ -1,0 +1,11 @@
+[Unit]
+Description=Jobbots Job Bank IT daily production timer
+Requires=jobbots-discover-jobbank.service
+
+[Timer]
+OnCalendar=*-*-* 06:35:00 America/Vancouver
+Persistent=true
+Unit=jobbots-discover-jobbank.service
+
+[Install]
+WantedBy=timers.target

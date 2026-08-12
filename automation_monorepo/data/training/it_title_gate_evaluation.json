@@ -1,0 +1,38 @@
+{
+  "source_rows": 647,
+  "user_selected_positive": 61,
+  "overrides": {
+    "total": 62,
+    "apply": 61,
+    "skip": 1
+  },
+  "prediction_buckets": {
+    "ambiguous": 338,
+    "reject_hard": 248,
+    "allow": 61
+  },
+  "counts": {
+    "true_negative_deferred": 338,
+    "true_negative": 248,
+    "true_positive": 61
+  },
+  "metrics_with_overrides": {
+    "precision_allow": 1.0,
+    "recall_allow_only": 1.0,
+    "recall_if_batch_recovers_deferred": 1.0,
+    "hard_false_negatives": 0,
+    "deferred_positives": 0,
+    "false_positives": 0
+  },
+  "metrics_pure_local_no_override": {
+    "true_positive": 55,
+    "false_negative_hard": 4,
+    "false_negative_deferred": 2,
+    "false_positive": 1,
+    "recall_allow": 0.9016393442622951,
+    "recall_with_batch": 0.9344262295081968
+  },
+  "false_negatives_hard": [],
+  "false_negatives_deferred": [],
+  "false_positives": []
+}

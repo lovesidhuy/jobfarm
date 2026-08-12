@@ -1,0 +1,98 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# GCP Compute Engine Startup Script for Jobbots Worker
+echo "Starting GCP VM initialization..."
+
+# Set ubuntu user password if provided
+%{ if vm_admin_password != "" ~}
+echo "ubuntu:${vm_admin_password}" | chpasswd
+%{ endif ~}
+
+# Ensure ubuntu user exists and is in sudoers
+if ! id -u ubuntu >/dev/null 2>&1; then
+  useradd -m -s /bin/bash -g google-sudoers ubuntu || useradd -m -s /bin/bash ubuntu
+fi
+
+# Configure RDP and XFCE desktop environment
+export DEBIAN_FRONTEND=noninteractive
+apt-get update -qq
+apt-get install -y -qq xrdp xfce4 xfce4-terminal ca-certificates curl git jq \
+  docker.io nodejs npm rsync xvfb python3 python3-pip python3-venv unzip
+
+echo "xfce4-session" > /home/ubuntu/.xsession
+chown ubuntu:ubuntu /home/ubuntu/.xsession
+adduser xrdp ssl-cert 2>/dev/null || true
+
+systemctl enable xrdp
+systemctl restart xrdp
+
+# Write runtime configuration connecting GCP VM to AWS backend services.
+# It may contain AWS credentials, so keep it readable by root/systemd only.
+install -d -m 0755 /etc/jobbots
+umask 077
+cat <<'EOF' > /etc/jobbots/runtime.conf
+CLOUD_PROVIDER=gcp
+GCP_PROJECT_ID=${gcp_project_id}
+GCP_REGION=${gcp_region}
+GCP_ZONE=${gcp_zone}
+AWS_REGION=${aws_region}
+AWS_DEFAULT_REGION=${aws_region}
+JOBBOTS_PROFILE_LEASE_TABLE=${profile_lease_table}
+JOBBOTS_PERSISTENT_ROOT=/srv/jobbots
+JOBBOTS_ARTIFACT_BUCKET=${artifact_bucket}
+JOBBOTS_ARTIFACT_PREFIX=${artifact_prefix}
+JOBBOTS_RUNTIME_SECRET=${runtime_secret_name}
+JOBBOTS_DEPLOYMENT_TIER=${deployment_tier}
+JOBBOTS_RESOURCE_PREFIX=${resource_prefix}
+EOF
+
+%{ if aws_access_key_id != "" && aws_secret_access_key != "" ~}
+cat <<'EOF' >> /etc/jobbots/runtime.conf
+AWS_ACCESS_KEY_ID=${aws_access_key_id}
+AWS_SECRET_ACCESS_KEY=${aws_secret_access_key}
+EOF
+%{ endif ~}
+
+chmod 0600 /etc/jobbots/runtime.conf
+systemctl enable docker
+
+# Setup persistent directory structure
+install -d -m 0755 /srv/jobbots
+install -d -m 0750 /srv/jobbots/mongodb
+install -d -o ubuntu -g ubuntu -m 0750 /srv/jobbots/application
+install -d -o ubuntu -g ubuntu -m 0750 /srv/jobbots/nstbrowser
+install -d -o ubuntu -g ubuntu -m 0750 /srv/jobbots/browser_profiles
+
+# GCP uses the VM boot disk for this ephemeral worker. Provide the same
+# dependency unit as the AWS worker without looking for an AWS EBS device.
+cat <<'EOF' > /usr/local/sbin/jobbots-prepare-local-volume
+#!/usr/bin/env bash
+set -euo pipefail
+install -d -m 0750 /srv/jobbots/mongodb
+install -d -o ubuntu -g ubuntu -m 0750 /srv/jobbots/application
+install -d -o ubuntu -g ubuntu -m 0750 /srv/jobbots/nstbrowser
+install -d -o ubuntu -g ubuntu -m 0750 /srv/jobbots/browser_profiles
+EOF
+chmod 0755 /usr/local/sbin/jobbots-prepare-local-volume
+cat <<'EOF' > /etc/systemd/system/jobbots-persistent-volume.service
+[Unit]
+Description=Prepare ephemeral GCP worker storage
+Before=docker.service
+After=local-fs.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/jobbots-prepare-local-volume
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+EOF
+systemctl daemon-reload
+systemctl enable --now jobbots-persistent-volume.service
+
+install -d -m 0755 /var/lib/jobbots
+date -u +%Y-%m-%dT%H:%M:%SZ > /var/lib/jobbots/gcp-startup.ready
+
+echo "GCP VM initialization completed successfully."

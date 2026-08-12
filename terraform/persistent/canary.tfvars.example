@@ -1,0 +1,11 @@
+aws_region                         = "us-west-2"
+availability_zone                 = "us-west-2a"
+environment                       = "canary"
+deployment_tier                   = "canary"
+resource_prefix                   = "jobbots-canary-CHANGE_ME"
+volume_size_gb                    = 20
+volume_iops                       = 3000
+volume_throughput                 = 125
+artifact_transition_days          = 30
+artifact_retention_days           = 30
+artifact_noncurrent_retention_days = 7

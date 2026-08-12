@@ -1,0 +1,13 @@
+[Unit]
+Description=Local noVNC proxy for NSTbrowser VNC
+After=jobbots-nstbrowser.service
+Requires=jobbots-nstbrowser.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/websockify --web=/usr/share/novnc/ 127.0.0.1:6080 127.0.0.1:5900
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

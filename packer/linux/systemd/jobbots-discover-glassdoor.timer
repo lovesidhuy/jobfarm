@@ -1,0 +1,13 @@
+[Unit]
+Description=Jobbots Glassdoor IT discovery timer (~40m, offset from Indeed)
+Requires=jobbots-discover-glassdoor.service
+
+[Timer]
+OnBootSec=8min
+OnUnitActiveSec=40min
+AccuracySec=1min
+Persistent=true
+Unit=jobbots-discover-glassdoor.service
+
+[Install]
+WantedBy=timers.target

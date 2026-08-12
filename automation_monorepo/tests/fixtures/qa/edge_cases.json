@@ -1,0 +1,128 @@
+{
+  "cases": [
+    {
+      "id": "edge_ctc_lakhs",
+      "profile": "IT",
+      "question": "What is your current CTC in lakhs per annum?",
+      "expected": {
+        "value": null,
+        "source": null,
+        "category": "unmatched",
+        "intent": null,
+        "ai_allowed": true
+      },
+      "note": "unanswered by deterministic layers; production would call the AI fallback (disabled in golden runs)"
+    },
+    {
+      "id": "edge_salary_monthly",
+      "profile": "IT",
+      "question": "What is your expected salary per month?",
+      "expected": {
+        "value": "70000",
+        "source": "policy_salary",
+        "category": "salary_expected",
+        "intent": "numeric",
+        "ai_allowed": false
+      }
+    },
+    {
+      "id": "edge_notice_months",
+      "profile": "IT",
+      "question": "What is your notice period in months?",
+      "expected": {
+        "value": "2 weeks",
+        "source": "smart_notice_default",
+        "category": "unmatched",
+        "intent": null,
+        "ai_allowed": true
+      }
+    },
+    {
+      "id": "edge_notice_weeks",
+      "profile": "IT",
+      "question": "What is your notice period in weeks?",
+      "expected": {
+        "value": "2 weeks",
+        "source": "smart_notice_default",
+        "category": "unmatched",
+        "intent": null,
+        "ai_allowed": true
+      }
+    },
+    {
+      "id": "edge_auth_ca_french_options",
+      "profile": "IT",
+      "question": "Are you legally authorized to work in Canada?",
+      "options": [
+        "Oui",
+        "Non"
+      ],
+      "expected": {
+        "value": "Oui",
+        "source": "policy_auth_ca",
+        "category": "auth_ca",
+        "intent": "yes",
+        "ai_allowed": false
+      }
+    },
+    {
+      "id": "edge_select_placeholder",
+      "profile": "IT",
+      "question": "Are you authorized to work in Canada?",
+      "options": [
+        "Select an option",
+        "Yes",
+        "No"
+      ],
+      "expected": {
+        "value": "Yes",
+        "source": "policy_auth_ca",
+        "category": "auth_ca",
+        "intent": "yes",
+        "ai_allowed": false
+      }
+    },
+    {
+      "id": "edge_unknown_ai_only",
+      "profile": "IT",
+      "question": "Describe a time you resolved a conflict with a difficult stakeholder.",
+      "expected": {
+        "value": null,
+        "source": null,
+        "category": "unmatched",
+        "intent": null,
+        "ai_allowed": true
+      },
+      "note": "unanswered by deterministic layers; production would call the AI fallback (disabled in golden runs)"
+    },
+    {
+      "id": "edge_empty_question",
+      "profile": "IT",
+      "question": "",
+      "expected": {
+        "value": null,
+        "source": null,
+        "category": "unmatched",
+        "intent": null,
+        "ai_allowed": true
+      },
+      "note": "unanswered by deterministic layers; production would call the AI fallback (disabled in golden runs)"
+    },
+    {
+      "id": "edge_gender_female_only_options",
+      "profile": "IT",
+      "question": "What is your gender?",
+      "options": [
+        "Female",
+        "Transgender female"
+      ],
+      "expected": {
+        "value": null,
+        "source": null,
+        "category": "gender",
+        "intent": "text",
+        "ai_allowed": false
+      }
+    }
+  ]
+}

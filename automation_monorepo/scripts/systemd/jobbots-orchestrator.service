@@ -1,0 +1,17 @@
+[Unit]
+Description=Jobbots Daily Autonomous Orchestrator Service
+After=network.target mongodb.service
+Documentation=https://github.com/usery/automation
+
+[Service]
+Type=simple
+User=jobbots
+WorkingDirectory=/srv/jobbots/automation_monorepo
+EnvironmentFile=/etc/jobbots/secrets.env
+ExecStart=/srv/jobbots/automation_monorepo/.venv/bin/python orchestrator.py --auto
+Restart=no
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

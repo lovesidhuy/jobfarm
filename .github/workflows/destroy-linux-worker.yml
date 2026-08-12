@@ -1,0 +1,108 @@
+name: Destroy Disposable Linux Worker
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_environment:
+        description: Protected GitHub environment
+        required: true
+        type: choice
+        options: [canary, production]
+      confirm_resource_prefix:
+        description: Exact RESOURCE_PREFIX to destroy
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: linux-lifecycle-${{ inputs.target_environment }}
+  cancel-in-progress: false
+
+jobs:
+  destroy:
+    environment: ${{ inputs.target_environment }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.8.0"
+      - name: Assert exact protected target
+        run: |
+          bash .github/scripts/assert-linux-target.sh
+          test "$CONFIRM_RESOURCE_PREFIX" = "$RESOURCE_PREFIX"
+        env:
+          TARGET_ENVIRONMENT: ${{ inputs.target_environment }}
+          RESOURCE_PREFIX: ${{ vars.RESOURCE_PREFIX }}
+          CONFIRM_RESOURCE_PREFIX: ${{ inputs.confirm_resource_prefix }}
+          VM_NAME: ${{ vars.VM_NAME }}
+          ARTIFACT_PREFIX: ${{ vars.ARTIFACT_PREFIX }}
+          AWS_REGION: ${{ vars.AWS_REGION }}
+          AVAILABILITY_ZONE: ${{ vars.AVAILABILITY_ZONE }}
+          TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+
+      - name: Initialize environment state
+        run: |
+          terraform -chdir=terraform/persistent init -reconfigure \
+            -backend-config="bucket=$TF_STATE_BUCKET" \
+            -backend-config="region=$AWS_REGION" \
+            -backend-config="key=${RESOURCE_PREFIX}/persistent.tfstate"
+          ami="$(aws ec2 describe-instances --filters "Name=tag:ResourcePrefix,Values=$RESOURCE_PREFIX" "Name=tag:Ephemeral,Values=true" "Name=instance-state-name,Values=running" --query 'Reservations[0].Instances[0].ImageId' --output text)"
+          test -n "$ami" && test "$ami" != "None"
+          .github/scripts/write-worker-tfvars.sh "$ami"
+          terraform -chdir=terraform init -reconfigure \
+            -backend-config="bucket=$TF_STATE_BUCKET" \
+            -backend-config="region=$AWS_REGION" \
+            -backend-config="key=${RESOURCE_PREFIX}/worker.tfstate"
+        env:
+          TARGET_ENVIRONMENT: ${{ inputs.target_environment }}
+          RESOURCE_PREFIX: ${{ vars.RESOURCE_PREFIX }}
+          VM_NAME: ${{ vars.VM_NAME }}
+          ARTIFACT_PREFIX: ${{ vars.ARTIFACT_PREFIX }}
+          AWS_REGION: ${{ vars.AWS_REGION }}
+          AVAILABILITY_ZONE: ${{ vars.AVAILABILITY_ZONE }}
+          TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+
+      - name: Run fail-closed shutdown and backup
+        run: |
+          set -euo pipefail
+          vm_id="$(terraform -chdir=terraform output -raw vm_id)"
+          actual_prefix="$(aws ec2 describe-instances --instance-ids "$vm_id" --query 'Reservations[0].Instances[0].Tags[?Key==`ResourcePrefix`].Value|[0]' --output text)"
+          test "$actual_prefix" = "$RESOURCE_PREFIX"
+          .github/scripts/ssm-run.sh "$vm_id" 'sudo /opt/jobbots/bin/jobbots-prepare-destroy'
+        env:
+          RESOURCE_PREFIX: ${{ vars.RESOURCE_PREFIX }}
+
+      - name: Detach and verify persistent EBS
+        run: |
+          set -euo pipefail
+          volume_id="$(terraform -chdir=terraform/persistent output -raw persistent_volume_id)"
+          terraform -chdir=terraform destroy -auto-approve -target=aws_volume_attachment.persistent -lock-timeout=300s
+          aws ec2 wait volume-available --volume-ids "$volume_id"
+          test "$(aws ec2 describe-volumes --volume-ids "$volume_id" --query 'Volumes[0].State' --output text)" = "available"
+        env:
+          AWS_REGION: ${{ vars.AWS_REGION }}
+          TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+          TARGET_ENVIRONMENT: ${{ inputs.target_environment }}
+          RESOURCE_PREFIX: ${{ vars.RESOURCE_PREFIX }}
+          VM_NAME: ${{ vars.VM_NAME }}
+          ARTIFACT_PREFIX: ${{ vars.ARTIFACT_PREFIX }}
+          AVAILABILITY_ZONE: ${{ vars.AVAILABILITY_ZONE }}
+
+      - name: Destroy disposable worker resources only
+        run: terraform -chdir=terraform destroy -auto-approve -lock-timeout=300s
+        env:
+          AWS_REGION: ${{ vars.AWS_REGION }}
+          TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+          TARGET_ENVIRONMENT: ${{ inputs.target_environment }}
+          RESOURCE_PREFIX: ${{ vars.RESOURCE_PREFIX }}
+          VM_NAME: ${{ vars.VM_NAME }}
+          ARTIFACT_PREFIX: ${{ vars.ARTIFACT_PREFIX }}
+          AVAILABILITY_ZONE: ${{ vars.AVAILABILITY_ZONE }}

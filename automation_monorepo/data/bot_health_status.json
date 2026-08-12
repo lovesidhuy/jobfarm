@@ -1,0 +1,85 @@
+{
+  "indeed_it": {
+    "bot_name": "indeed_it",
+    "crash_window_start": 0.0,
+    "last_crash_reason": "Exited with code -15",
+    "last_seen": 1784778065.489103,
+    "next_retry_after": 0.0,
+    "pid": 0,
+    "restart_count": 0,
+    "state": "HEALTHY",
+    "last_activity": "Searching for 'Service Desk' in 'Surrey, BC'"
+  },
+  "indeed_general": {
+    "bot_name": "indeed_general",
+    "crash_window_start": 0.0,
+    "last_activity": "Initializing Indeed bot",
+    "last_crash_reason": "",
+    "last_seen": 1783224316.929,
+    "next_retry_after": 0.0,
+    "pid": 0,
+    "restart_count": 0,
+    "state": "HEALTHY"
+  },
+  "glassdoor_it": {
+    "bot_name": "glassdoor_it",
+    "crash_window_start": 0.0,
+    "last_crash_reason": "",
+    "last_seen": 1783983324.5202692,
+    "next_retry_after": 0.0,
+    "pid": 0,
+    "restart_count": 0,
+    "state": "HEALTHY"
+  },
+  "workopolis_it": {
+    "bot_name": "workopolis_it",
+    "crash_window_start": 0.0,
+    "last_crash_reason": "",
+    "last_seen": 0.0,
+    "next_retry_after": 0.0,
+    "pid": 0,
+    "restart_count": 0,
+    "state": "HEALTHY"
+  },
+  "linkedin_it": {
+    "bot_name": "linkedin_it",
+    "crash_window_start": 0.0,
+    "last_crash_reason": "Exited with code 1",
+    "last_seen": 1781760207.30605,
+    "next_retry_after": 0.0,
+    "pid": 0,
+    "restart_count": 0,
+    "state": "HEALTHY",
+    "last_activity": "Processing job 4428465968 (Software Engineer at OSI Maritime Systems)"
+  },
+  "linkedin_general": {
+    "bot_name": "linkedin_general",
+    "state": "HEALTHY",
+    "pid": 0,
+    "last_seen": 1786316743.618002,
+    "restart_count": 0,
+    "crash_window_start": 0.0,
+    "last_crash_reason": "",
+    "next_retry_after": 0.0
+  },
+  "google_it": {
+    "bot_name": "google_it",
+    "state": "HEALTHY",
+    "pid": 0,
+    "last_seen": 1786316743.664361,
+    "restart_count": 0,
+    "crash_window_start": 0.0,
+    "last_crash_reason": "",
+    "next_retry_after": 0.0
+  },
+  "jobbank_it": {
+    "bot_name": "jobbank_it",
+    "state": "HEALTHY",
+    "pid": 0,
+    "last_seen": 1786316743.6839051,
+    "restart_count": 0,
+    "crash_window_start": 0.0,
+    "last_crash_reason": "",
+    "next_retry_after": 0.0
+  }
+}

@@ -1,0 +1,13 @@
+[Unit]
+Description=Jobbots Indeed GENERAL discovery timer (~35m, offset from IT)
+Requires=jobbots-discover-indeed-general.service
+
+[Timer]
+OnBootSec=12min
+OnUnitActiveSec=35min
+AccuracySec=1min
+Persistent=true
+Unit=jobbots-discover-indeed-general.service
+
+[Install]
+WantedBy=timers.target

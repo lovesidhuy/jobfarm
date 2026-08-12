@@ -1,0 +1,151 @@
+{
+  "cases": [
+    {
+      "id": "gen_auth_ca",
+      "profile": "GENERAL",
+      "question": "Are you legally authorized to work in Canada?",
+      "options": [
+        "Yes",
+        "No"
+      ],
+      "expected": {
+        "value": "Yes",
+        "source": "policy_auth_ca",
+        "category": "auth_ca",
+        "intent": "yes",
+        "ai_allowed": false
+      }
+    },
+    {
+      "id": "gen_sponsorship_ca",
+      "profile": "GENERAL",
+      "question": "Will you now or in the future require sponsorship for employment visa status in Canada?",
+      "options": [
+        "Yes",
+        "No"
+      ],
+      "expected": {
+        "value": "No",
+        "source": "policy_sponsorship_ca",
+        "category": "sponsorship_ca",
+        "intent": "no",
+        "ai_allowed": false
+      }
+    },
+    {
+      "id": "gen_auth_us",
+      "profile": "GENERAL",
+      "question": "Are you authorized to work in the United States?",
+      "options": [
+        "Yes",
+        "No"
+      ],
+      "expected": {
+        "value": "No",
+        "source": "policy_auth_us",
+        "category": "auth_us",
+        "intent": "no",
+        "ai_allowed": false
+      }
+    },
+    {
+      "id": "gen_gender",
+      "profile": "GENERAL",
+      "question": "What is your gender?",
+      "options": [
+        "Male",
+        "Female",
+        "Decline to self-identify"
+      ],
+      "expected": {
+        "value": "Male",
+        "source": "policy_gender",
+        "category": "gender",
+        "intent": "text",
+        "ai_allowed": false
+      }
+    },
+    {
+      "id": "gen_years_customer_service",
+      "profile": "GENERAL",
+      "question": "How many years of customer service experience do you have?",
+      "expected": {
+        "value": "5",
+        "source": "policy_years",
+        "category": "years_experience",
+        "intent": "numeric",
+        "ai_allowed": false
+      }
+    },
+    {
+      "id": "gen_first_name",
+      "profile": "GENERAL",
+      "question": "First name",
+      "expected": {
+        "value": "Alex",
+        "source": "profile_first_name",
+        "category": "unmatched",
+        "intent": null,
+        "ai_allowed": true
+      }
+    },
+    {
+      "id": "gen_email",
+      "profile": "GENERAL",
+      "question": "Email address",
+      "expected": {
+        "value": "alex.smith@example.com",
+        "source": "profile_email",
+        "category": "unmatched",
+        "intent": null,
+        "ai_allowed": true
+      }
+    },
+    {
+      "id": "gen_city",
+      "profile": "GENERAL",
+      "question": "What city do you live in?",
+      "expected": {
+        "value": "Surrey",
+        "source": "profile_city",
+        "category": "unmatched",
+        "intent": null,
+        "ai_allowed": true
+      }
+    },
+    {
+      "id": "gen_education_level",
+      "profile": "GENERAL",
+      "question": "Highest level of education",
+      "options": [
+        "High School",
+        "Bachelor's Degree",
+        "Master's Degree",
+        "Other"
+      ],
+      "expected": {
+        "value": "Bachelor's Degree",
+        "source": "smart_degree_bachelor",
+        "category": "unmatched",
+        "intent": null,
+        "ai_allowed": true
+      }
+    },
+    {
+      "id": "gen_skill_crm",
+      "profile": "GENERAL",
+      "question": "Do you have experience with CRM software?",
+      "options": [
+        "Yes",
+        "No"
+      ],
+      "expected": {
+        "value": "Yes",
+        "source": "fallback_yes_no_yes",
+        "category": "unmatched",
+        "intent": null,
+        "ai_allowed": true
+      }
+    }
+  ]
+}

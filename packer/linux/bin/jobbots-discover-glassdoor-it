@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+# Glassdoor + Workopolis IT discovery across the configured IT term set.
+# Used by jobbots-discover-glassdoor.service (oneshot) + timer (~40m).
+set -euo pipefail
+
+export PATH="/opt/jobbots/venv/bin:/usr/local/bin:/usr/bin:${PATH:-}"
+export PYTHONPATH="/opt/jobbots/app/automation_monorepo${PYTHONPATH:+:$PYTHONPATH}"
+export DISCOVERY_ENGINE="${DISCOVERY_ENGINE:-new}"
+export GLASSDOOR_DISCOVERY_PROVIDER="${GLASSDOOR_DISCOVERY_PROVIDER:-hybrid}"
+export GLASSDOOR_REQUEST_PAUSE_SECONDS="${GLASSDOOR_REQUEST_PAUSE_SECONDS:-3.5}"
+export GLASSDOOR_CDP_CHUNK="${GLASSDOOR_CDP_CHUNK:-0}"
+# Cloud workers must not start Glassdoor CDP/JobSpy on bare GCP egress.
+export JOBSPY_SKIP_LOCAL="${JOBSPY_SKIP_LOCAL:-1}"
+export DISCOVERY_EMAIL_REFRESH_HOURS="${DISCOVERY_EMAIL_REFRESH_HOURS:-6}"
+export DISCOVERY_BATCH_AI_MAX="${DISCOVERY_BATCH_AI_MAX:-40}"
+export DISCOVERY_REFRESH_EMAIL_HISTORY="${DISCOVERY_REFRESH_EMAIL_HISTORY:-0}"
+export WORKOPOLIS_ALLOW_BROWSER_FALLBACK="${WORKOPOLIS_ALLOW_BROWSER_FALLBACK:-1}"
+export MONGODB_URI="${MONGODB_URI:-mongodb://127.0.0.1:27017}"
+export JOBBOTS_MONGO_DATABASE="${JOBBOTS_MONGO_DATABASE:-jobbots}"
+export PYTHONUNBUFFERED=1
+
+ROOT="/opt/jobbots/app/automation_monorepo"
+cd "$ROOT"
+
+# Use PORTAL_CORE_TERMS (high-signal ~13) not the full 62-hero list.
+# Full heroes × 6 cities wasted hours on Cloudflare + Canada-wide SERPs
+# (Montreal/Toronto/Cheyenne) that geo-policy correctly rejects → ~1% yield.
+if [ -z "${JOBBOTS_GLASSDOOR_IT_KEYWORDS:-}" ]; then
+  JOBBOTS_GLASSDOOR_IT_KEYWORDS="$(/opt/jobbots/venv/bin/python - <<'PY'
+from pathlib import Path
+import importlib.util
+p = Path("/opt/jobbots/app/automation_monorepo/config/it/hero_terms.py")
+spec = importlib.util.spec_from_file_location("it_hero_terms", p)
+m = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(m)
+terms = list(getattr(m, "PORTAL_CORE_TERMS", None) or m.HERO_SEARCH_TERMS[:16])
+print(",".join(terms))
+PY
+)"
+fi
+
+# Dedicated Glassdoor max — do NOT share Indeed's JOBBOTS_DISCOVERY_MAX_RESULTS=20
+# (that starved GD to 1 page of national junk). 40 → enough metro EA depth.
+MAX="${JOBBOTS_GLASSDOOR_MAX_RESULTS:-${JOBBOTS_DISCOVERY_MAX_RESULTS_GLASSDOOR:-40}}"
+# Glassdoor SERP fromAge + planner freshness (user: 7d so 3–4d Metro EA still visible)
+FRESH="${JOBBOTS_DISCOVERY_FRESHNESS_DAYS:-7}"
+echo "[jobbots-discover-glassdoor-it] portals=glassdoor,workopolis provider=${GLASSDOOR_DISCOVERY_PROVIDER} keywords=$(echo "$JOBBOTS_GLASSDOOR_IT_KEYWORDS" | awk -F, '{print NF}') max=$MAX freshness=${FRESH}d pause=${GLASSDOOR_REQUEST_PAUSE_SECONDS}s chunk=${GLASSDOOR_CDP_CHUNK}"
+
+exec /usr/bin/xvfb-run -a --server-args="-screen 0 1280x1024x24" \
+  /opt/jobbots/venv/bin/python scripts/discovery_runner.py \
+  --profile it \
+  --portals glassdoor,workopolis \
+  --keyword "$JOBBOTS_GLASSDOOR_IT_KEYWORDS" \
+  --max-results "$MAX" \
+  --freshness-days "$FRESH"

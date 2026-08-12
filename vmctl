@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# One-command power switch for the GCP worker.
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "$0")" && pwd)"
+export CLOUD_PROVIDER=gcp
+
+case "${1:-status}" in
+  on|start|run) exec bash "$ROOT/scripts/gcp_lifecycle.sh" run ;;
+  off|stop) exec bash "$ROOT/scripts/gcp_lifecycle.sh" soft-destroy ;;
+  sleep) exec bash "$ROOT/scripts/gcp_lifecycle.sh" sleep ;;
+  status) exec bash "$ROOT/scripts/gcp_lifecycle.sh" status ;;
+  health) exec bash "$ROOT/scripts/gcp_lifecycle.sh" health ;;
+  preflight) exec bash "$ROOT/scripts/gcp_lifecycle.sh" preflight ;;
+  verify-logins|verify_logins) exec bash "$ROOT/scripts/gcp_lifecycle.sh" verify-logins ;;
+  recover) exec bash "$ROOT/scripts/gcp_lifecycle.sh" recover ;;
+  sync) exec bash "$ROOT/scripts/gcp_lifecycle.sh" sync ;;
+  soft-destroy|soft_destroy) exec bash "$ROOT/scripts/gcp_lifecycle.sh" soft-destroy ;;
+  destroy) exec bash "$ROOT/scripts/gcp_lifecycle.sh" destroy ;;
+  full-destroy|full_destroy) exec bash "$ROOT/scripts/gcp_lifecycle.sh" full-destroy ;;
+  *) echo "Usage: $0 on|off|status|health|preflight|verify-logins|recover|sync|soft-destroy|destroy|full-destroy" >&2; exit 2 ;;
+esac

@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+set -euo pipefail
+volume_id="${1:?volume id is required}"
+bucket="${2:?artifact bucket is required}"
+backup_key="${3:?backup key is required}"
+expected_record_id="${4:-}"
+if [ -n "$expected_record_id" ]; then
+  [[ "$expected_record_id" =~ ^[A-Za-z0-9._-]+$ ]]
+fi
+device="/dev/disk/by-id/nvme-Amazon_Elastic_Block_Store_${volume_id//-/}"
+mount_dir="/srv/jobbots-recovery"
+archive="$mount_dir/archive/mongodb.archive.gz"
+
+cleanup() {
+  docker rm -f jobbots-recovery-mongodb >/dev/null 2>&1 || true
+  mountpoint -q "$mount_dir" && umount "$mount_dir" || true
+}
+trap cleanup EXIT
+
+for _ in $(seq 1 60); do
+  [ -b "$device" ] && break
+  sleep 2
+done
+[ -b "$device" ]
+blkid "$device" >/dev/null 2>&1 || mkfs.ext4 -L jobbots-recovery "$device"
+install -d "$mount_dir"
+mount "$device" "$mount_dir"
+install -d "$mount_dir/mongodb" "$mount_dir/archive"
+chown -R 999:999 "$mount_dir/mongodb"
+
+aws s3 cp "s3://${bucket}/${backup_key}" "$archive" --only-show-errors
+expected_sha="$(aws s3api head-object --bucket "$bucket" --key "$backup_key" --query Metadata.sha256 --output text)"
+test "$(sha256sum "$archive" | awk '{print $1}')" = "$expected_sha"
+
+docker run -d --name jobbots-recovery-mongodb --network host \
+  --mount type=bind,src="$mount_dir/mongodb",dst=/data/db \
+  mongo:8.0 --bind_ip 127.0.0.1 --port 27018 >/dev/null
+for _ in $(seq 1 60); do
+  docker exec jobbots-recovery-mongodb mongosh --port 27018 --quiet --eval 'db.runCommand({ping:1}).ok' | grep -q 1 && break
+  sleep 2
+done
+docker exec -i jobbots-recovery-mongodb mongorestore --port 27018 --archive --gzip <"$archive"
+if [ -n "$expected_record_id" ]; then
+  count="$(docker exec jobbots-recovery-mongodb mongosh --port 27018 --quiet --eval "db.getSiblingDB('jobbots_canary').records.countDocuments({canary_id:'${expected_record_id}'})")"
+  test "$count" = "1"
+fi

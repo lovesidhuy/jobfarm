@@ -1,0 +1,13 @@
+[Unit]
+Description=Jobbots LinkedIn IT discovery timer (offset from other portals)
+Requires=jobbots-discover-linkedin.service
+
+[Timer]
+OnBootSec=15min
+OnUnitActiveSec=90min
+AccuracySec=2min
+Persistent=true
+Unit=jobbots-discover-linkedin.service
+
+[Install]
+WantedBy=timers.target

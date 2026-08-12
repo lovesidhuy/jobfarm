@@ -1,0 +1,3 @@
+message_id,email_account,sender,subject,company_name,job_title,source_platform,applied_at,synced_at
+<sample-001@email.example.com>,it,Recruiting Team <no-reply@example.com>,"We received your application - Software Engineer",Example Corp,Software Engineer,greenhouse,2026-08-01T00:00:00+00:00,2026-08-01T00:00:00+00:00
+<sample-002@email.example.com>,general,Careers <no-reply@sample.com>,"Application confirmation - Customer Support Specialist",Sample Org,Customer Support Specialist,lever,2026-08-02T00:00:00+00:00,2026-08-02T00:00:00+00:00

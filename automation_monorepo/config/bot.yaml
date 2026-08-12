@@ -1,0 +1,32 @@
+bot_id: glassdoor_it
+label: Glassdoor IT (External-only via Glassdoor; AI gate save; standalone)
+
+gate:
+  enabled: true
+  model_preference:
+    - groq
+    - ollama
+
+save:
+  on_external: true
+  on_easy_apply: true
+
+glassdoor:
+  enabled: true
+
+ai:
+  primary: groq
+  fallback: ollama
+  groq_rate_per_sec: 0.5
+  groq_burst_capacity: 20
+
+mongodb:
+  uri: mongodb://localhost:27017
+  database: glassdoor_it_db
+
+paths:
+  data_dir: data
+  logs_dir: data/logs
+  training_dir: data/training
+  snapshots_dir: data/snapshots
+  state_dir: data/state

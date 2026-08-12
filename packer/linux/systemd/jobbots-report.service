@@ -1,0 +1,18 @@
+[Unit]
+Description=JobBots daily Google Sheets and Drive report
+Wants=network-online.target jobbots-mongodb.service
+After=network-online.target jobbots-mongodb.service jobbots-load-secrets.service
+
+[Service]
+Type=oneshot
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/opt/jobbots/app/automation_monorepo
+EnvironmentFile=/etc/jobbots/secrets.env
+EnvironmentFile=/etc/jobbots/runtime.conf
+EnvironmentFile=-/etc/jobbots/runtime-prod-overrides.conf
+Environment=PYTHONUNBUFFERED=1
+Environment=MONGODB_URI=mongodb://127.0.0.1:27017
+ExecStart=/opt/jobbots/venv/bin/python -c "from core.google_sheets_reporter import run_daily_reporting; run_daily_reporting()"
+TimeoutStartSec=900
+

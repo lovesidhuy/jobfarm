@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# Job Bank lead collection across every configured IT term.
+set -euo pipefail
+
+export PATH="/opt/jobbots/venv/bin:/usr/local/bin:/usr/bin:${PATH:-}"
+export PYTHONPATH="/opt/jobbots/app/automation_monorepo:/opt/jobbots/app/scrapers${PYTHONPATH:+:$PYTHONPATH}"
+export MONGODB_URI="${MONGODB_URI:-mongodb://127.0.0.1:27017}"
+export JOBBOTS_MONGO_DATABASE="${JOBBOTS_MONGO_DATABASE:-jobbots}"
+export DISPLAY="${DISPLAY:-:99}"
+export PYTHONUNBUFFERED=1
+cd /opt/jobbots/app/automation_monorepo
+
+# Screening-answer imports pull pyautogui (needs an X display). Playwright
+# itself is headless, but the Indeed AI path still reads DISPLAY.
+exec /usr/bin/xvfb-run -a --server-args="-screen 0 1280x1024x24" \
+  /opt/jobbots/venv/bin/python scripts/run_jobbank_it.py

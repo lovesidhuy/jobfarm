@@ -1,0 +1,937 @@
+---
+- name: Configure automation VM
+  hosts: windows
+  gather_facts: false
+
+  vars:
+    install_dir: 'C:\automation'
+    python_version: "3.11.9"
+    mongo_version: "7.0.8"
+    golden_image: false
+    install_python_deps_at_deploy: "{{ not (golden_image | bool) }}"
+    browser_vendor: "{{ lookup('env', 'BROWSER_VENDOR') | default('chrome', true) }}"
+    use_ixbrowser: "{{ browser_vendor == 'ixbrowser' }}"
+    use_adspower: "{{ browser_vendor == 'adspower' and (lookup('env', 'ADSPOWER_API_KEY') | length > 0) }}"
+
+  tasks:
+
+    - name: Download Chocolatey install script
+      ansible.windows.win_get_url:
+        url: https://community.chocolatey.org/install.ps1
+        dest: 'C:\Windows\Temp\choco_install.ps1'
+      when: not (golden_image | bool)
+
+    - name: Install Chocolatey
+      ansible.windows.win_shell: |
+        Set-ExecutionPolicy Bypass -Scope Process -Force
+        [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072
+        & 'C:\Windows\Temp\choco_install.ps1'
+      args:
+        creates: 'C:\ProgramData\chocolatey\bin\choco.exe'
+      when: not (golden_image | bool)
+
+    - name: Wait for Chocolatey pending files to clear
+      ansible.windows.win_shell: Start-Sleep -Seconds 15
+      when: not (golden_image | bool)
+
+    - name: Install Python, Git, MongoDB, NodeJS
+      ansible.windows.win_shell: |
+        choco install python311 git mongodb nodejs -y --no-progress --timeout 3600
+      register: choco_result
+      ignore_errors: true
+      when: not (golden_image | bool)
+
+    - name: Retry main Chocolatey installs
+      ansible.windows.win_shell: |
+        choco install python311 git mongodb nodejs -y --no-progress --timeout 3600
+      when:
+        - not (golden_image | bool)
+        - choco_result is defined
+        - choco_result.rc != 0
+
+    - name: Install AWS CLI and MongoDB Database Tools
+      ansible.windows.win_shell: |
+        choco install awscli mongodb-database-tools -y --no-progress
+      when: not (golden_image | bool)
+      ignore_errors: true
+
+    - name: Check AWS CLI required for backup and restore
+      ansible.windows.win_shell: |
+        $env:Path = [Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' + [Environment]::GetEnvironmentVariable('Path', 'User')
+        if (Get-Command aws.exe -ErrorAction SilentlyContinue) { exit 0 }
+        exit 1
+      register: aws_cli_check
+      changed_when: false
+      failed_when: false
+
+    - name: Install missing AWS CLI on golden-image fast path
+      ansible.windows.win_shell: |
+        choco install awscli -y --no-progress --timeout 1800
+      when: aws_cli_check.rc != 0
+
+    - name: Verify AWS CLI required for backup and restore
+      ansible.windows.win_shell: |
+        $env:Path = [Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' + [Environment]::GetEnvironmentVariable('Path', 'User')
+        aws --version
+      changed_when: false
+
+    - name: Check MongoDB tools required for backup and restore
+      ansible.windows.win_shell: |
+        if (Get-Command mongodump.exe -ErrorAction SilentlyContinue) { exit 0 }
+        if (Test-Path 'C:\Program Files\MongoDB\Tools\100\bin\mongodump.exe') { exit 0 }
+        exit 1
+      register: mongodb_tools_check
+      changed_when: false
+      failed_when: false
+
+    - name: Install missing MongoDB tools on golden-image fast path
+      ansible.windows.win_shell: |
+        choco install mongodb-database-tools -y --no-progress --timeout 1800
+      when: mongodb_tools_check.rc != 0
+
+    - name: Verify MongoDB tools required for backup and restore
+      ansible.windows.win_shell: |
+        if (Get-Command mongodump.exe -ErrorAction SilentlyContinue) { exit 0 }
+        if (Test-Path 'C:\Program Files\MongoDB\Tools\100\bin\mongodump.exe') { exit 0 }
+        throw 'mongodump.exe is unavailable'
+      changed_when: false
+
+    - name: Download Google Chrome installer (direct MSI, bypasses choco)
+      ansible.windows.win_get_url:
+        url: https://dl.google.com/dl/chrome/install/googlechromestandaloneenterprise64.msi
+        dest: 'C:\Windows\Temp\chrome.msi'
+      ignore_errors: true
+      when: not (golden_image | bool)
+
+    - name: Install Google Chrome MSI
+      ansible.windows.win_package:
+        path: 'C:\Windows\Temp\chrome.msi'
+        state: present
+      ignore_errors: true
+      when: not (golden_image | bool)
+
+    - name: Start + enable MongoDB service
+      ansible.windows.win_service:
+        name: MongoDB
+        state: started
+        start_mode: auto
+      when: not (golden_image | bool)
+
+    - name: Allow multiple concurrent RDP sessions (both admin + dev can connect)
+      ansible.windows.win_regedit:
+        path: HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server
+        name: fSingleSessionPerUser
+        data: 0
+        type: dword
+      when: not (golden_image | bool)
+
+    - name: Set RDP policy — disable single-session-per-user restriction
+      ansible.windows.win_regedit:
+        path: HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services
+        name: fSingleSessionPerUser
+        data: 0
+        type: dword
+      when: not (golden_image | bool)
+
+    - name: Set RDP policy — allow up to 10 concurrent sessions
+      ansible.windows.win_regedit:
+        path: HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services
+        name: MaxInstanceCount
+        data: 10
+        type: dword
+      when: not (golden_image | bool)
+
+    # --- OpenSSH Server -------------------------------------------------------
+    - name: Install OpenSSH Server (Windows capability)
+      ansible.windows.win_shell: |
+        $ErrorActionPreference = "Stop"
+
+        $sshd = Get-WindowsCapability -Online | Where-Object Name -like 'OpenSSH.Server*'
+        if ($sshd.State -ne 'Installed') {
+          Add-WindowsCapability -Online -Name $sshd.Name
+          Write-Output "OpenSSH Server installed"
+        } else {
+          Write-Output "OpenSSH Server already installed"
+        }
+      register: openssh_install
+      failed_when: false
+      when: not (golden_image | bool)
+
+    - name: Check if sshd service exists
+      ansible.windows.win_shell: |
+        Get-Service sshd -ErrorAction SilentlyContinue
+      register: sshd_check
+      changed_when: false
+      failed_when: false
+      when: not (golden_image | bool)
+
+    - name: Start and enable sshd service
+      ansible.windows.win_service:
+        name: sshd
+        state: started
+        start_mode: auto
+      failed_when: false
+      when:
+        - not (golden_image | bool)
+        - sshd_check is defined
+        - sshd_check.stdout != ""
+
+    - name: Set default shell for SSH to PowerShell
+      ansible.windows.win_regedit:
+        path: HKLM:\SOFTWARE\OpenSSH
+        name: DefaultShell
+        data: 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe'
+        type: string
+      when:
+        - not (golden_image | bool)
+        - sshd_check is defined
+        - sshd_check.stdout != ""
+
+    - name: Open firewall port for SSH (22)
+      ansible.windows.win_shell: |
+        Remove-NetFirewallRule -DisplayName 'OpenSSH-Server-In-TCP' -ErrorAction SilentlyContinue
+        New-NetFirewallRule -DisplayName 'OpenSSH-Server-In-TCP' -Direction Inbound -Action Allow `
+          -Protocol TCP -LocalPort 22 -Profile Any -Enabled True | Out-Null
+      when:
+        - not (golden_image | bool)
+        - sshd_check is defined
+        - sshd_check.stdout != ""
+
+    - name: Create automation directory
+      ansible.windows.win_file:
+        path: "{{ install_dir }}"
+        state: directory
+
+    - name: Create runtime directories
+      ansible.windows.win_file:
+        path: "{{ item }}"
+        state: directory
+      loop:
+        - "{{ install_dir }}\\automation_monorepo\\logs"
+        - "{{ install_dir }}\\automation_monorepo\\data"
+        - "{{ install_dir }}\\master\\Auto_job_applier_linkedIn_gen\\data"
+        - "{{ install_dir }}\\master\\Auto_job_applier_linkedIn_gen\\logs"
+        - "{{ install_dir }}\\master\\Auto_job_applier_linkedIn_it\\data"
+        - "{{ install_dir }}\\master\\Auto_job_applier_linkedIn_it\\logs"
+        - 'C:\automation\profiles'
+
+    - name: Refresh PATH (so git is available)
+      ansible.windows.win_shell: |
+        $env:Path = [System.Environment]::GetEnvironmentVariable('Path','Machine') + ';' + [System.Environment]::GetEnvironmentVariable('Path','User')
+        git --version
+
+    - name: Clone / update repo from GitHub (private repo via token)
+      # Idempotent: works whether install_dir is empty, has files but no .git
+      # (e.g. created by earlier tasks), or already has .git from a prior run.
+      ansible.windows.win_shell: |
+        $env:Path = [System.Environment]::GetEnvironmentVariable('Path','Machine') + ';' + [System.Environment]::GetEnvironmentVariable('Path','User')
+        $token = "{{ lookup('env','GH_TOKEN') }}"
+        $url   = "https://x-access-token:$token@github.com/jobfarm/jobfarm.git"
+        git config --global credential.helper ""
+        cd "{{ install_dir }}"
+        if (-not (Test-Path "{{ install_dir }}\.git")) {
+          git init -b main 2>&1 | Out-Null
+        }
+        git remote add origin $url 2>&1 | Out-Null
+        git remote set-url origin $url
+        git fetch --depth 1 origin main 2>&1 | %{ $_.ToString() }
+        git reset --hard origin/main 2>&1 | %{ $_.ToString() }
+        git log -1 --oneline
+
+    - name: Validate required runtime env vars from CI/Infisical
+      ansible.builtin.assert:
+        that:
+          - lookup('env','INFISICAL_CLIENT_ID') | length > 0
+          - lookup('env','INFISICAL_CLIENT_SECRET') | length > 0
+          - lookup('env','PROXY_URL') | length > 0
+          - lookup('env','CAPMONSTER_API_KEY') | length > 0
+          - lookup('env','ADSPOWER_API_KEY') | length > 0
+        fail_msg: "Missing required deployment secret(s). Check GitHub Infisical bootstrap secrets and Infisical dev project secrets."
+        quiet: true
+
+    - name: Write/update runtime .env with Infisical-fetched secrets
+      ansible.windows.win_template:
+        src: .env.j2
+        dest: "{{ install_dir }}/automation_monorepo/.env"
+      vars:
+        DEPLOY_INFISICAL_CLIENT_ID: "{{ lookup('env','INFISICAL_CLIENT_ID') }}"
+        DEPLOY_INFISICAL_CLIENT_SECRET: "{{ lookup('env','INFISICAL_CLIENT_SECRET') }}"
+        DEPLOY_PROXY_URL: "{{ lookup('env','PROXY_URL') }}"
+        DEPLOY_CAPMONSTER_API_KEY: "{{ lookup('env','CAPMONSTER_API_KEY') }}"
+        DEPLOY_ADSPOWER_API_KEY: "{{ lookup('env','ADSPOWER_API_KEY') }}"
+        DEPLOY_INFISICAL_PROJECT_SLUG: "mybots-r46g"
+        DEPLOY_INFISICAL_ENV: "dev"
+        DEPLOY_BROWSER_VENDOR: "{{ lookup('env','BROWSER_VENDOR') | default('chrome', true) }}"
+        DEPLOY_ADSPOWER_API_URL: "{{ lookup('env','ADSPOWER_API_URL') | default('http://127.0.0.1:50325', true) }}"
+        DEPLOY_ADSPOWER_HEADLESS: "{{ lookup('env','ADSPOWER_HEADLESS') | default('1', true) }}"
+        DEPLOY_ADSPOWER_BOT_SCOPE: "{{ lookup('env','ADSPOWER_BOT_SCOPE') | default('indeed_it_linkedin_it', true) }}"
+        DEPLOY_ADSPOWER_USER_ID_INDEED_IT: "{{ lookup('env','ADSPOWER_USER_ID_INDEED_IT') | default('', true) }}"
+        DEPLOY_ADSPOWER_USER_ID_INDEED_GENERAL: "{{ lookup('env','ADSPOWER_USER_ID_INDEED_GENERAL') | default('', true) }}"
+        DEPLOY_ADSPOWER_USER_ID_LINKEDIN_IT: "{{ lookup('env','ADSPOWER_USER_ID_LINKEDIN_IT') | default('', true) }}"
+        DEPLOY_ADSPOWER_USER_ID_LINKEDIN_GENERAL: "{{ lookup('env','ADSPOWER_USER_ID_LINKEDIN_GENERAL') | default('', true) }}"
+      no_log: true
+
+    - name: Validate runtime .env on VM (safe diagnostics)
+      ansible.windows.win_shell: |
+        $envFile = "{{ install_dir }}\automation_monorepo\.env"
+        $required = @(
+          "INFISICAL_CLIENT_ID",
+          "INFISICAL_CLIENT_SECRET",
+          "INFISICAL_PROJECT_SLUG",
+          "INFISICAL_ENV",
+          "PROXY_URL",
+          "CAPMONSTER_API_KEY",
+          "ADSPOWER_API_KEY",
+          "BROWSER_VENDOR"
+        )
+        if (-not (Test-Path $envFile)) { throw ".env missing at $envFile" }
+        $content = Get-Content -Path $envFile
+        $errors = @()
+        foreach ($key in $required) {
+          $found = @($content | Where-Object { $_ -match "^\s*$([regex]::Escape($key))\s*=\s*(.+)\s*$" })
+          $empty = @($content | Where-Object { $_ -match "^\s*$([regex]::Escape($key))\s*=\s*$" })
+          if ($found.Count -ne 1) { $errors += "$key count=$($found.Count)" }
+          if ($empty.Count -gt 0) { $errors += "$key has empty duplicate" }
+          Write-Output "${key}: present=$($found.Count -eq 1) duplicates=$([Math]::Max(0, $found.Count - 1))"
+        }
+        if ($errors.Count -gt 0) { throw "Invalid runtime .env: $($errors -join '; ')" }
+
+    - name: Copy resumes to bot working directories
+      # Each bot runs from its master folder, so resumes must exist there.
+      # Source of truth is automation_monorepo/all resumes/.
+      ansible.windows.win_shell: |
+        $src = "{{ install_dir }}/automation_monorepo/all resumes"
+        $targets = @(
+          @{ Dir = "{{ install_dir }}/master/it_indeed cwgeopy/Auto_indeed/all resumes"; File = "ls_resume_it.pdf" },
+          @{ Dir = "{{ install_dir }}/master/gen_indeed/Auto_indeed/all resumes"; File = "ls_resume_general.pdf" },
+          @{ Dir = "{{ install_dir }}/master/Auto_job_applier_linkedIn_it/all resumes"; File = "ls_resume_it.pdf" },
+          @{ Dir = "{{ install_dir }}/master/Auto_job_applier_linkedIn_gen/all resumes"; File = "ls_resume_general.pdf" },
+          @{ Dir = "{{ install_dir }}/master/it_indeed cwgeopy/Auto_indeed/Auto_job_applier_glassdoor/all resumes"; File = "ls_resume_it.pdf" },
+          @{ Dir = "{{ install_dir }}/master/gen_indeed/Auto_indeed/Auto_job_applier_glassdoor/all resumes"; File = "ls_resume_general.pdf" }
+        )
+        foreach ($t in $targets) {
+          if (-not (Test-Path $t.Dir)) { New-Item -ItemType Directory -Path $t.Dir -Force | Out-Null }
+          Copy-Item -Path (Join-Path $src $t.File) -Destination (Join-Path $t.Dir $t.File) -Force
+        }
+        Write-Output "Resumes distributed to all bot working directories"
+      ignore_errors: true
+
+    - name: Install Python dependencies
+      # Refresh PATH so freshly-installed Python is found, and use
+      # `python -m pip` (not bare `pip`) so a missing pip Scripts dir doesn't
+      # silently fail. Golden images already include requirements.txt deps;
+      # override install_python_deps_at_deploy=true when reusing a stale image.
+      ansible.windows.win_shell: |
+        $env:Path = [System.Environment]::GetEnvironmentVariable('Path','Machine') + ';' + [System.Environment]::GetEnvironmentVariable('Path','User')
+        cd "{{ install_dir }}"
+        python -m pip install --upgrade pip --no-cache-dir
+        python -m pip install -r requirements.txt --no-cache-dir
+      args:
+        chdir: "{{ install_dir }}"
+      async: 1800
+      poll: 30
+      when: install_python_deps_at_deploy | bool
+
+    - name: Install Playwright browsers
+      ansible.windows.win_shell: |
+        $env:Path = [System.Environment]::GetEnvironmentVariable('Path','Machine') + ';' + [System.Environment]::GetEnvironmentVariable('Path','User')
+        python -m playwright install chromium
+      args:
+        chdir: "{{ install_dir }}"
+      async: 600
+      poll: 30
+      ignore_errors: true
+      when: not (golden_image | bool)
+
+    - name: Validate Infisical/runtime config on VM
+      ansible.windows.win_shell: |
+        $env:Path = [System.Environment]::GetEnvironmentVariable('Path','Machine') + ';' + [System.Environment]::GetEnvironmentVariable('Path','User')
+        cd "{{ install_dir }}\automation_monorepo"
+        python test_infisical.py
+      args:
+        chdir: "{{ install_dir }}\\automation_monorepo"
+
+    - name: Backfill CSV job history into MongoDB
+      ansible.windows.win_shell: |
+        $env:Path = [System.Environment]::GetEnvironmentVariable('Path','Machine') + ';' + [System.Environment]::GetEnvironmentVariable('Path','User')
+        cd "{{ install_dir }}\automation_monorepo"
+        python scripts\import_csv_history_to_mongo.py
+      args:
+        chdir: "{{ install_dir }}\\automation_monorepo"
+      changed_when: false
+      failed_when: false
+
+    - name: Stop existing supervisor + bot processes to prevent conflicts
+      ansible.windows.win_shell: |
+        $procs = Get-WmiObject Win32_Process | Where-Object { $_.CommandLine -like '*supervisor.py*' -or $_.CommandLine -like '*bot_manager.py*' -or $_.CommandLine -like '*bots\*.py*' }
+        foreach ($p in $procs) {
+          Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue
+          Write-Output "Stopped PID $($p.ProcessId)"
+        }
+        if (-not $procs) { Write-Output "No supervisor/bot processes found" }
+      ignore_errors: true
+
+    - name: Stop running browser and driver processes to prevent file locks
+      ansible.windows.win_shell: |
+        $names = @("ixBrowser", "chrome", "chromedriver", "undetected_chromedriver")
+        $stopped = 0
+        foreach ($name in $names) {
+          $procs = Get-Process -Name $name -ErrorAction SilentlyContinue
+          if ($procs) {
+            $procs | Stop-Process -Force -ErrorAction SilentlyContinue
+            Write-Output "Stopped process(es): $name"
+            $stopped++
+          }
+        }
+        if ($stopped -eq 0) { Write-Output "No browser/driver processes found" }
+        exit 0
+      ignore_errors: true
+
+    # --- Windows autologon (interactive session for browser daemons) -----------
+    - name: Configure Windows Autologon registry keys
+      ansible.windows.win_regedit:
+        path: HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon
+        name: "{{ item.name }}"
+        data: "{{ item.data }}"
+        type: "{{ item.type | default('string') }}"
+      loop:
+        - { name: 'AutoAdminLogon', data: '1' }
+        - { name: 'DefaultUserName', data: 'Administrator' }
+        - { name: 'DefaultPassword', data: "{{ ansible_password }}" }
+        - { name: 'DefaultDomainName', data: '.' }
+
+    - name: Reboot VM to trigger Autologon and initialize interactive session
+      ansible.windows.win_shell: shutdown /r /t 5 /f /d p:4:1 /c "Ansible Autologon Reboot"
+      ignore_errors: true
+
+    - name: Wait for VM to reboot and WinRM to become reachable
+      ansible.builtin.wait_for_connection:
+        delay: 15
+        timeout: 300
+
+    # --- AdsPower headless daemon + profile wiring (default) -------------------
+    - name: Check if AdsPower is already installed
+      ansible.windows.win_shell: |
+        $paths = @(
+          'C:\Program Files (x86)\AdsPower\AdsPower Global.exe',
+          'C:\Program Files\AdsPower Global\AdsPower Global.exe',
+          "$env:LOCALAPPDATA\AdsPower\AdsPower Global.exe"
+        )
+        $found = $paths | Where-Object { Test-Path $_ } | Select-Object -First 1
+        if ($found) {
+          Write-Output $found
+          exit 0
+        }
+        exit 1
+      register: adspower_installed
+      changed_when: false
+      failed_when: false
+      when: use_adspower | bool
+
+    - name: Run AdsPower VM Setup Script
+      ansible.windows.win_shell: |
+        $env:Path = [System.Environment]::GetEnvironmentVariable('Path','Machine') + ';' + [System.Environment]::GetEnvironmentVariable('Path','User')
+        cd "{{ install_dir }}"
+        $params = @("-WriteEnv")
+        $apiKey = "{{ lookup('env','ADSPOWER_API_KEY') }}"
+        if ($apiKey) { $params += @("-ApiKey", $apiKey) }
+        $proxyUrl = "{{ lookup('env','PROXY_URL') }}"
+        if ($proxyUrl) { $params += @("-ProxyUrl", $proxyUrl) }
+        $installerUrl = "{{ lookup('env','ADSPOWER_INSTALLER_URL') }}"
+        if ($installerUrl) { $params += @("-InstallerUrl", $installerUrl) }
+        powershell -ExecutionPolicy Bypass -File scripts\setup_adspower_vm.ps1 @params
+      args:
+        chdir: "{{ install_dir }}"
+      environment:
+        ADSPOWER_API_KEY: "{{ lookup('env','ADSPOWER_API_KEY') }}"
+        PROXY_URL: "{{ lookup('env','PROXY_URL') }}"
+        ADSPOWER_BOT_SCOPE: "{{ lookup('env','ADSPOWER_BOT_SCOPE') | default('indeed_it_linkedin_it', true) }}"
+      register: adspower_setup_res
+      when: use_adspower | bool
+      ignore_errors: true
+      async: 3600
+      poll: 30
+
+    - name: Notify if AdsPower setup script failed on fresh VM
+      ansible.builtin.debug:
+        msg: |
+          WARNING: AdsPower setup did not complete successfully.
+          -> Check deploy logs for scripts\setup_adspower_vm.ps1 output.
+          -> Optional override: set ADSPOWER_INSTALLER_URL in Infisical to a direct .exe URL.
+          -> OR RDP in, install AdsPower manually, then use "Setup AdsPower Profiles.bat".
+      when:
+        - use_adspower | bool
+        - adspower_installed.rc != 0
+        - adspower_setup_res is failed or (adspower_setup_res.rc | default(0)) != 0
+
+    - name: Wait for AdsPower Local API (port 50325)
+      ansible.windows.win_shell: |
+        $apiKey = "{{ lookup('env','ADSPOWER_API_KEY') }}"
+        $headers = @{}
+        if ($apiKey) { $headers["Authorization"] = "Bearer $apiKey" }
+        $timeout = 120
+        $start = Get-Date
+        while (((Get-Date) - $start).TotalSeconds -lt $timeout) {
+          try {
+            $r = Invoke-RestMethod -Uri 'http://127.0.0.1:50325/api/v1/user/list?page_size=1' -Headers $headers -TimeoutSec 5
+            Write-Output "AdsPower Local API is reachable"
+            exit 0
+          } catch {
+            Start-Sleep -Seconds 5
+          }
+        }
+        Write-Output "WARN: AdsPower Local API not reachable after ${timeout}s"
+        exit 1
+      register: adspower_api_check
+      when: use_adspower | bool
+      ignore_errors: true
+
+    - name: Create AdsPower auto-setup shortcut on Desktop
+      ansible.windows.win_copy:
+        content: |
+          @echo off
+          echo ============================================
+          echo   AdsPower Profile Auto-Setup
+          echo ============================================
+          echo.
+          echo   1. Ensure AdsPower daemon is running (headless)
+          echo   2. Create missing Indeed/LinkedIn profiles
+          echo   3. Write ADSPOWER_PROFILE_ID_* to .env automatically
+          echo.
+          cd /d C:\automation
+          powershell -ExecutionPolicy Bypass -File scripts\setup_adspower_vm.ps1 -SkipInstall -WriteEnv
+          pause
+        dest: 'C:/Users/{{ ansible_user }}/Desktop/Setup AdsPower Profiles.bat'
+      when: use_adspower | bool
+
+    # --- ixBrowser stack (legacy — skipped when BROWSER_VENDOR=adspower) ------
+    - name: ixBrowser browser stack (legacy)
+      when: use_ixbrowser | bool
+      block:
+        - name: Check if ixBrowser is already installed
+          ansible.windows.win_stat:
+            path: 'C:\Program Files\ixBrowser\ixBrowser.exe'
+          register: ixbrowser_installed
+
+        - name: Download ixBrowser installer (from env var or fallback URL)
+          ansible.windows.win_get_url:
+            url: "{{ lookup('env','IXBROWSER_INSTALLER_URL') | default('https://d.ixbrowser.com/ixbrowser/version/ixBrowser_Setup_2_8_15.exe', true) }}"
+            dest: 'C:\Windows\Temp\ixBrowser-Setup.exe'
+            timeout: 600
+          when:
+            - not ixbrowser_installed.stat.exists
+          ignore_errors: true
+          register: ixbrowser_download
+
+        - name: Install ixBrowser silently (only if downloaded)
+          ansible.windows.win_shell: |
+            Start-Process -FilePath 'C:\Windows\Temp\ixBrowser-Setup.exe' `
+              -ArgumentList '/S','/silent' -Wait
+          when:
+            - not ixbrowser_installed.stat.exists
+            - ixbrowser_download is defined
+            - ixbrowser_download.changed | default(false)
+          ignore_errors: true
+
+        - name: Notify if ixBrowser must be installed manually
+          ansible.builtin.debug:
+            msg: |
+              WARNING: ixBrowser desktop NOT installed on this VM.
+              -> RDP in and download from https://www.ixbrowser.com/
+              -> OR set IXBROWSER_INSTALLER_URL in Infisical to a direct .exe URL
+                and re-run the deploy.
+          when:
+            - not ixbrowser_installed.stat.exists
+            - lookup('env','IXBROWSER_INSTALLER_URL') | length == 0
+
+        - name: Remove ixBrowser Local API firewall rule (localhost only)
+          ansible.windows.win_shell: |
+            Remove-NetFirewallRule -DisplayName 'ixBrowser-LocalAPI' -ErrorAction SilentlyContinue
+            exit 0
+
+        - name: Create AppData Roaming directory if missing
+          ansible.windows.win_file:
+            path: 'C:\Users\{{ ansible_user }}\AppData\Roaming'
+            state: directory
+
+        - name: Restore session artifacts from S3 when local zip is missing
+          ansible.windows.win_shell: |
+            $env:Path = [System.Environment]::GetEnvironmentVariable('Path','Machine') + ';' + [System.Environment]::GetEnvironmentVariable('Path','User')
+            powershell -ExecutionPolicy Bypass -File "{{ install_dir }}\automation_monorepo\scripts\restore_session_from_s3.ps1"
+          ignore_errors: true
+
+        - name: Check if ixbrowser_session.zip exists
+          ansible.windows.win_stat:
+            path: '{{ install_dir }}\ixbrowser_session.zip'
+          register: zip_stat
+
+        - name: Remove existing ixBrowser profile folder to prevent conflicts
+          ansible.windows.win_file:
+            path: 'C:\Users\{{ ansible_user }}\AppData\Roaming\ixBrowser'
+            state: absent
+          when: zip_stat.stat.exists
+
+        - name: Restore ixBrowser pre-authenticated session if zip is present
+          community.windows.win_unzip:
+            src: '{{ install_dir }}\ixbrowser_session.zip'
+            dest: 'C:\Users\{{ ansible_user }}\AppData\Roaming'
+          when: zip_stat.stat.exists
+
+        - name: Check if chrome_profiles.zip exists
+          ansible.windows.win_stat:
+            path: '{{ install_dir }}\chrome_profiles.zip'
+          register: chrome_zip_stat
+
+        - name: Remove existing Chrome profile folder to prevent conflicts
+          ansible.windows.win_file:
+            path: '{{ install_dir }}\automation_monorepo\data\browser_profiles'
+            state: absent
+          when: chrome_zip_stat.stat.exists
+
+        - name: Ensure Chrome profile destination parent folder exists
+          ansible.windows.win_file:
+            path: '{{ install_dir }}\automation_monorepo\data'
+            state: directory
+          when: chrome_zip_stat.stat.exists
+
+        - name: Restore Chrome session if zip is present
+          community.windows.win_unzip:
+            src: '{{ install_dir }}\chrome_profiles.zip'
+            dest: '{{ install_dir }}\automation_monorepo\data\browser_profiles'
+          when: chrome_zip_stat.stat.exists
+
+        - name: Launch ixBrowser desktop (if installed and not running)
+          ansible.windows.win_shell: |
+            $ixExe = 'C:\Program Files\ixBrowser\ixBrowser.exe'
+            if (-not (Test-Path $ixExe)) {
+              Write-Output "ixBrowser not installed -- skipping launch"
+              exit 0
+            }
+            $running = Get-Process -Name "ixBrowser" -ErrorAction SilentlyContinue
+            if ($running) {
+              Write-Output "ixBrowser already running (PID $($running.Id -join ', '))"
+            } else {
+              $TaskName = "LaunchixBrowser"
+              $Action = New-ScheduledTaskAction -Execute $ixExe
+              $Principal = New-ScheduledTaskPrincipal -UserId "Administrator" -LogonType Interactive
+              $Settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
+              Register-ScheduledTask -TaskName $TaskName -Action $Action -Principal $Principal -Settings $Settings -Force | Out-Null
+              Start-ScheduledTask -TaskName $TaskName
+              Start-Sleep -Seconds 15
+            }
+          ignore_errors: true
+
+        - name: Wait for ixBrowser Local API (port 53200)
+          ansible.windows.win_shell: |
+            $timeout = 90
+            $start = Get-Date
+            while (((Get-Date) - $start).TotalSeconds -lt $timeout) {
+              try {
+                $r = Invoke-RestMethod -Uri 'http://127.0.0.1:53200/api/profile/list?limit=1' -TimeoutSec 5
+                Write-Output "ixBrowser Local API is reachable"
+                exit 0
+              } catch {
+                Start-Sleep -Seconds 5
+              }
+            }
+            Write-Output "WARN: ixBrowser Local API not reachable after ${timeout}s"
+            exit 1
+          ignore_errors: true
+          register: ixbrowser_api_check
+
+        - name: Create ixBrowser profiles via auto-setup (if API is up)
+          ansible.windows.win_shell: |
+            $env:Path = [System.Environment]::GetEnvironmentVariable('Path','Machine') + ';' + [System.Environment]::GetEnvironmentVariable('Path','User')
+            cd "{{ install_dir }}\automation_monorepo"
+            python scripts\auto_ixbrowser_setup.py --auto --write-env --host 127.0.0.1 --port 53200
+          when: ixbrowser_api_check is defined and ixbrowser_api_check.rc == 0
+          ignore_errors: true
+
+        - name: Create ixBrowser auto-setup shortcut on Desktop
+          ansible.windows.win_copy:
+            content: |
+              @echo off
+              echo ixBrowser legacy setup — only when BROWSER_VENDOR=ixbrowser
+              cd /d C:\automation\automation_monorepo
+              C:\Python311\python.exe scripts\auto_ixbrowser_setup.py --auto --write-env
+              pause
+            dest: 'C:/Users/{{ ansible_user }}/Desktop/Setup ixBrowser Profiles.bat'
+
+    - name: Configure firewall rules safely (prevent broad exposure + preserve WinRM)
+      ansible.windows.win_shell: |
+        # Remove MongoDB, ChromeCDP, AdsPower inbound rules from OS firewall
+        # to prevent broad internet exposure. Loopback/local traffic does not need inbound rules.
+        foreach ($name in @('MongoDB', 'ChromeCDP', 'AdsPower')) {
+          Remove-NetFirewallRule -DisplayName $name -ErrorAction SilentlyContinue
+        }
+        
+        # Configure WinRM-HTTP rule in-place safely without deleting to preserve active connection
+        $winrmRule = Get-NetFirewallRule -DisplayName 'WinRM-HTTP' -ErrorAction SilentlyContinue
+        if ($winrmRule) {
+          Set-NetFirewallRule -DisplayName 'WinRM-HTTP' -LocalPort 5985 -Profile Any -Enabled True -Action Allow | Out-Null
+        } else {
+          New-NetFirewallRule -DisplayName 'WinRM-HTTP' -Direction Inbound -Action Allow `
+            -Protocol TCP -LocalPort 5985 -Profile Any -Enabled True | Out-Null
+        }
+        
+        Set-Service WinRM -StartupType Automatic
+        Start-Service WinRM -ErrorAction SilentlyContinue
+      when: not (golden_image | bool)
+
+    # ── Datadog Agent (metrics + filtered logs) ────────────────────────────
+    # Installs only when DD_API_KEY is provided (Infisical → CI env).
+    # Bots emit DogStatsD metrics to localhost:8125; the agent ships them
+    # plus a small set of supervisor/bot logs. Skipped silently otherwise.
+    - name: Check if Datadog Agent is installed
+      ansible.windows.win_shell: |
+        if (Get-Service -Name "DatadogAgent" -ErrorAction SilentlyContinue) { exit 0 } else { exit 1 }
+      register: datadog_installed
+      failed_when: false
+      changed_when: false
+
+    - name: Download Datadog Agent MSI
+      ansible.windows.win_get_url:
+        url: https://s3.amazonaws.com/ddagent-windows-stable/datadog-agent-7-latest.amd64.msi
+        dest: 'C:\Windows\Temp\datadog-agent.msi'
+        timeout: 600
+      when:
+        - datadog_installed.rc != 0
+        - lookup('env','DD_API_KEY') | length > 0
+
+    - name: Install Datadog Agent
+      ansible.windows.win_shell: |
+        Start-Process -Wait msiexec -ArgumentList '/qn /i C:\Windows\Temp\datadog-agent.msi APIKEY="{{ lookup('env','DD_API_KEY') }}" SITE="{{ lookup('env','DD_SITE') | default('datadoghq.com', true) }}" HOSTNAME="jobbots-dev-vm"'
+      no_log: true
+      when:
+        - datadog_installed.rc != 0
+        - lookup('env','DD_API_KEY') | length > 0
+
+    - name: Enable Datadog logs in datadog.yaml
+      ansible.windows.win_shell: |
+        $yaml = 'C:\ProgramData\Datadog\datadog.yaml'
+        if (Test-Path $yaml) {
+          $content = Get-Content $yaml -Raw
+          if ($content -notmatch '(?m)^logs_enabled:\s*true') {
+            Add-Content $yaml "`nlogs_enabled: true"
+          }
+        }
+      when: lookup('env','DD_API_KEY') | length > 0
+
+    - name: Ensure Datadog conf.d subdirectories exist
+      ansible.windows.win_file:
+        path: '{{ item }}'
+        state: directory
+      loop:
+        - 'C:\ProgramData\Datadog\conf.d\jobbots.d'
+        - 'C:\ProgramData\Datadog\conf.d\mongo.d'
+        - 'C:\ProgramData\Datadog\conf.d\process.d'
+      when: lookup('env','DD_API_KEY') | length > 0
+
+    - name: Configure Datadog log collection
+      ansible.windows.win_copy:
+        content: |
+          logs:
+            - type: file
+              path: C:\automation\automation_monorepo\logs\supervisor\*.log
+              service: jobbots-supervisor
+              source: python
+            - type: file
+              path: C:\automation\master\*\logs\*\log.txt
+              service: jobbots
+              source: python
+        dest: 'C:\ProgramData\Datadog\conf.d\jobbots.d\conf.yaml'
+      when: lookup('env','DD_API_KEY') | length > 0
+
+    - name: Configure Datadog MongoDB check
+      ansible.windows.win_copy:
+        content: |
+          instances:
+            - hosts:
+                - localhost:27017
+        dest: 'C:\ProgramData\Datadog\conf.d\mongo.d\conf.yaml'
+      when: lookup('env','DD_API_KEY') | length > 0
+
+    - name: Configure Datadog process checks
+      ansible.windows.win_copy:
+        content: |
+          instances:
+            - name: jobbots_supervisor
+              search_string: ['supervisor.py']
+              exact_match: false
+            - name: mongod
+              search_string: ['mongod']
+              exact_match: false
+        dest: 'C:\ProgramData\Datadog\conf.d\process.d\conf.yaml'
+      when: lookup('env','DD_API_KEY') | length > 0
+
+    - name: Restart Datadog Agent to apply changes
+      ansible.windows.win_shell: |
+        Restart-Service -Name "datadogagent" -Force
+        Start-Sleep -Seconds 5
+        Start-Service -Name "datadog-process-agent", "datadog-trace-agent" -ErrorAction SilentlyContinue
+      when: lookup('env','DD_API_KEY') | length > 0
+
+    - name: Notify when Datadog is skipped
+      ansible.builtin.debug:
+        msg: "DD_API_KEY not set — skipping Datadog Agent install. Add it to Infisical to enable monitoring."
+      when: lookup('env','DD_API_KEY') | length == 0
+
+    - name: Create onboarding shortcut on Desktop
+      ansible.windows.win_copy:
+        content: |
+          @echo off
+          echo ============================================
+          echo   Job Automation Bots - Initial Login Setup
+          echo ============================================
+          echo.
+          echo Chrome will open for each portal so you can log in manually.
+          echo Cookies are saved to C:\automation\profiles\<bot_name>.
+          echo.
+          cd /d C:\automation\automation_monorepo
+          C:\Python311\python.exe live_e2e_logins.py
+          pause
+        dest: 'C:/Users/{{ ansible_user }}/Desktop/Setup Bot Logins.bat'
+
+    - name: Create selected-bots shortcut on Desktop
+      ansible.windows.win_copy:
+        content: |
+          @echo off
+          setlocal
+          echo ============================================
+          echo   Run Selected Bots
+          echo ============================================
+          echo.
+          echo Enter one or more bot names separated by commas.
+          echo Examples:
+          echo   linkedin_it
+          echo   indeed_it,linkedin_it
+          echo   indeed_it,indeed_general,linkedin_general
+          echo.
+          set /p BOT_NAMES=Bot names: 
+          if "%BOT_NAMES%"=="" (
+            echo No bots entered.
+            pause
+            exit /b 1
+          )
+          cd /d C:\automation\automation_monorepo
+          echo.
+          echo Running: %BOT_NAMES%
+          set BOT_NAMES=%BOT_NAMES:,= %
+          for %%B in (%BOT_NAMES%) do C:\Python311\python.exe bot_manager.py start %%B
+          echo.
+          pause
+        dest: 'C:/Users/{{ ansible_user }}/Desktop/Run Selected Bots.bat'
+
+    - name: Create per-bot run shortcuts on Desktop
+      ansible.windows.win_copy:
+        content: |
+          @echo off
+          echo Starting {{ item.label }}...
+          cd /d C:\automation\automation_monorepo
+          C:\Python311\python.exe bot_manager.py start {{ item.name }}
+          pause
+        dest: 'C:/Users/{{ ansible_user }}/Desktop/Run {{ item.label }}.bat'
+      loop:
+        - { name: 'indeed_it', label: 'Indeed IT' }
+        - { name: 'indeed_general', label: 'Indeed General' }
+        - { name: 'glassdoor_it', label: 'Glassdoor IT' }
+        - { name: 'linkedin_it', label: 'LinkedIn IT' }
+        - { name: 'linkedin_general', label: 'LinkedIn General' }
+
+    - name: Create all-bots supervisor shortcut on Desktop
+      ansible.windows.win_copy:
+        content: |
+          @echo off
+          echo Starting all enabled bots...
+          cd /d C:\automation\automation_monorepo
+          C:\Python311\python.exe bot_manager.py start indeed_it
+          C:\Python311\python.exe bot_manager.py start indeed_general
+          C:\Python311\python.exe bot_manager.py start glassdoor_it
+          C:\Python311\python.exe bot_manager.py start linkedin_it
+          C:\Python311\python.exe bot_manager.py start linkedin_general
+          pause
+        dest: 'C:/Users/{{ ansible_user }}/Desktop/Run All Enabled Bots.bat'
+
+    - name: Keep legacy supervisor shortcut as alias on Desktop
+      ansible.windows.win_copy:
+        content: |
+          @echo off
+          echo Starting all enabled bots...
+          cd /d C:\automation\automation_monorepo
+          C:\Python311\python.exe bot_manager.py start indeed_it
+          C:\Python311\python.exe bot_manager.py start indeed_general
+          C:\Python311\python.exe bot_manager.py start glassdoor_it
+          C:\Python311\python.exe bot_manager.py start linkedin_it
+          C:\Python311\python.exe bot_manager.py start linkedin_general
+          pause
+        dest: 'C:/Users/{{ ansible_user }}/Desktop/Start Supervisor.bat'
+
+    - name: Create manager status shortcut on Desktop
+      ansible.windows.win_copy:
+        content: |
+          @echo off
+          cd /d C:\automation\automation_monorepo
+          C:\Python311\python.exe bot_manager.py status
+          pause
+        dest: 'C:/Users/{{ ansible_user }}/Desktop/Bot Status.bat'
+
+    - name: Create run-bots-and-shutdown shortcut on Desktop
+      ansible.windows.win_copy:
+        content: |
+          @echo off
+          echo ========================================================
+          echo   Run Job Bots (Indeed IT, LinkedIn IT, Glassdoor IT) and Auto-Shutdown
+          echo ========================================================
+          echo.
+          echo Running supervisor for one cycle, then shutting down VM...
+          cd /d C:\automation\automation_monorepo
+          C:\Python311\python.exe supervisor.py --only indeed_it,linkedin_it,glassdoor_it --parallel --once --include-not-ok --shutdown
+          echo.
+          echo Shutdown triggered! To cancel shutdown, run: shutdown /a
+          pause
+        dest: 'C:/Users/{{ ansible_user }}/Desktop/Run Bots and Auto-Shutdown.bat'
+
+    - name: Create stop-all shortcut on Desktop
+      ansible.windows.win_copy:
+        content: |
+          @echo off
+          cd /d C:\automation\automation_monorepo
+          C:\Python311\python.exe bot_manager.py stop-all
+          pause
+        dest: 'C:/Users/{{ ansible_user }}/Desktop/Stop All Bots.bat'
+
+    - name: Create one-cycle debug shortcut on Desktop
+      ansible.windows.win_copy:
+        content: |
+          @echo off
+          REM Debug helper: runs selected bots once, then exits.
+          setlocal
+          echo ============================================
+          echo   Debug: Run Selected Bots Once
+          echo ============================================
+          echo.
+          set /p BOT_NAMES=Bot names, comma-separated: 
+          if "%BOT_NAMES%"=="" (
+            echo No bots entered.
+            pause
+            exit /b 1
+          )
+          cd /d C:\automation\automation_monorepo
+          C:\Python311\python.exe supervisor.py --only "%BOT_NAMES%" --parallel --once --include-not-ok
+          pause
+        dest: 'C:/Users/{{ ansible_user }}/Desktop/Debug Run Selected Bots Once.bat'
+
+    - name: Remove confusing old bot shortcuts from Desktop
+      ansible.windows.win_file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - 'C:/Users/{{ ansible_user }}/Desktop/Test Single Bot.bat'
+        - 'C:/Users/{{ ansible_user }}/Desktop/Start Supervisor (force, single cycle).bat'
+
+    - name: Restore data from S3 backup (MongoDB, logs, cookies)
+      ansible.windows.win_shell: |
+        powershell -ExecutionPolicy Bypass -File C:\automation\automation_monorepo\scripts\restore_s3.ps1
+      ignore_errors: true
+
+    # Ollama is intentionally NOT installed here. Set up later manually if needed.

@@ -1,0 +1,13 @@
+[Unit]
+Description=Jobbots Indeed IT discovery timer (~25m)
+Requires=jobbots-supervisor.service
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=25min
+AccuracySec=1min
+Persistent=true
+Unit=jobbots-supervisor.service
+
+[Install]
+WantedBy=timers.target

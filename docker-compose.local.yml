@@ -1,0 +1,319 @@
+# =============================================================================
+# Mac-local Docker Compose — Headless Job Automation Workers
+# =============================================================================
+# Runs alongside the existing docker-compose.yml (MongoDB). Workers use
+# SeleniumBase UC + Playwright CDP (NO Nstbrowser).  Chrome profile dirs
+# live on named volumes so sessions survive container rebuilds.  The Mac's IP
+# is the browser egress (no extra browser proxy).  CapMonster proxied captcha
+# solving still uses PROXY_URL (Webshare rotational) for Turnstile tokens.
+#
+# Architecture:
+#   ┌──────────────┐    ┌──────────────────────────────────────────┐
+#   │   MongoDB    │◄───┤  Workers (per-portal Docker containers)  │
+#   │  (existing)  │    │  ├─ indeed-it        (CDP 9222)          │
+#   └──────────────┘    │  ├─ indeed-general   (CDP 9223)          │
+#                       │  ├─ glassdoor-it     (CDP 9224)          │
+#                       │  ├─ linkedin-general (CDP 9241)          │
+#                       │  ├─ workopolis-it    (CDP 9230)          │
+#                       │  └─ google-it        (CDP 9250)          │
+#                       └──────────────────────────────────────────┘
+#
+# Quick Start:
+#   1. docker compose -f docker-compose.yml up -d mongodb       # shared DB
+#   2. python automation_monorepo/scripts/local_mac/login_profiles.py  # login once
+#   3. docker compose -f docker-compose.local.yml build          # build image
+#   4. docker compose -f docker-compose.local.yml up -d          # start all
+#   5. docker compose -f docker-compose.local.yml logs -f        # watch output
+#
+# Run a single portal:
+#   docker compose -f docker-compose.local.yml up -d indeed-it
+#
+# Re-login when sessions expire:
+#   python automation_monorepo/scripts/local_mac/relogin_profiles.py
+# =============================================================================
+
+services:
+  # ── MongoDB (shared — reuses docker-compose.yml naming) ──────────────────
+  mongodb:
+    image: mongo:7.0
+    container_name: automation-mongodb
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: admin
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGODB_PASSWORD:-changeme}
+    volumes:
+      - mongodb_data:/data/db
+      - ./docker/mongodb/init:/docker-entrypoint-initdb.d:ro
+    networks:
+      - automation-network
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # ── Indeed IT ────────────────────────────────────────────────────────────
+  indeed-it:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.local-bot
+    container_name: jobbot-indeed-it
+    restart: unless-stopped
+    environment:
+      - PYTHONUNBUFFERED=1
+      - BROWSER_VENDOR=chrome
+      - BYPASS_PROXY=0
+      - RUN_IN_BACKGROUND=true
+      - AUTONOMOUS_SUPERVISOR=1
+      - SKIP_USER_START=1
+      - USE_CAPMONSTER_CAPTCHA_SOLVER=1
+      - MONGO_URI=mongodb://admin:${MONGODB_PASSWORD:-changeme}@mongodb:27017/
+      - JOBBOTS_MONGO_DATABASE=jobbots
+      - INDEED_BASE_URL=https://ca.indeed.com
+      - GLASSDOOR_BASE_URL=https://www.glassdoor.ca
+      # Per-bot identity
+      - BOT_NAME=indeed_it
+      - CDP_PORT=9222
+      - BOT_INSTANCE_ID=0
+      - JOB_PROFILE=IT
+      - CHROME_PROFILE_DIR=/app/chrome_profiles/indeed_it
+      - CHROME_PROFILE_DIR=/chrome_profiles
+    volumes:
+      - chrome_profile_indeed_it:/chrome_profiles
+      - ./automation_monorepo:/app/automation_monorepo:ro
+      - ./master:/app/master:ro
+      - worker_logs:/app/automation_monorepo/logs
+      - worker_data:/app/automation_monorepo/data
+      - worker_supervisor_state:/app/automation_monorepo/data/supervisor
+    command: ["python", "-u", "/app/automation_monorepo/scripts/local_mac/worker_entrypoint.py"]
+    networks:
+      - automation-network
+    depends_on:
+      mongodb:
+        condition: service_healthy
+
+  # ── Indeed General ───────────────────────────────────────────────────────
+  indeed-general:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.local-bot
+    container_name: jobbot-indeed-general
+    restart: unless-stopped
+    environment:
+      - PYTHONUNBUFFERED=1
+      - BROWSER_VENDOR=chrome
+      - BYPASS_PROXY=0
+      - RUN_IN_BACKGROUND=true
+      - AUTONOMOUS_SUPERVISOR=1
+      - SKIP_USER_START=1
+      - USE_CAPMONSTER_CAPTCHA_SOLVER=1
+      - MONGO_URI=mongodb://admin:${MONGODB_PASSWORD:-changeme}@mongodb:27017/
+      - JOBBOTS_MONGO_DATABASE=jobbots
+      - INDEED_BASE_URL=https://ca.indeed.com
+      - GLASSDOOR_BASE_URL=https://www.glassdoor.ca
+      - BOT_NAME=indeed_general
+      - CDP_PORT=9223
+      - BOT_INSTANCE_ID=1
+      - JOB_PROFILE=General
+      - CHROME_PROFILE_DIR=/chrome_profiles
+    volumes:
+      - chrome_profile_indeed_general:/chrome_profiles
+      - ./automation_monorepo:/app/automation_monorepo:ro
+      - ./master:/app/master:ro
+      - worker_logs:/app/automation_monorepo/logs
+      - worker_data:/app/automation_monorepo/data
+      - worker_supervisor_state:/app/automation_monorepo/data/supervisor
+    command: ["python", "-u", "/app/automation_monorepo/scripts/local_mac/worker_entrypoint.py"]
+    networks:
+      - automation-network
+    depends_on:
+      mongodb:
+        condition: service_healthy
+
+  # ── Glassdoor IT ─────────────────────────────────────────────────────────
+  glassdoor-it:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.local-bot
+    container_name: jobbot-glassdoor-it
+    restart: unless-stopped
+    environment:
+      - PYTHONUNBUFFERED=1
+      - BROWSER_VENDOR=chrome
+      - BYPASS_PROXY=0
+      - RUN_IN_BACKGROUND=true
+      - AUTONOMOUS_SUPERVISOR=1
+      - SKIP_USER_START=1
+      - USE_CAPMONSTER_CAPTCHA_SOLVER=1
+      - MONGO_URI=mongodb://admin:${MONGODB_PASSWORD:-changeme}@mongodb:27017/
+      - JOBBOTS_MONGO_DATABASE=jobbots
+      - INDEED_BASE_URL=https://ca.indeed.com
+      - GLASSDOOR_BASE_URL=https://www.glassdoor.ca
+      - BOT_NAME=glassdoor_it
+      - CDP_PORT=9224
+      - BOT_INSTANCE_ID=2
+      - JOB_PROFILE=IT
+      - CHROME_PROFILE_DIR=/chrome_profiles
+    volumes:
+      - chrome_profile_glassdoor_it:/chrome_profiles
+      - ./automation_monorepo:/app/automation_monorepo:ro
+      - ./master:/app/master:ro
+      - worker_logs:/app/automation_monorepo/logs
+      - worker_data:/app/automation_monorepo/data
+      - worker_supervisor_state:/app/automation_monorepo/data/supervisor
+    command: ["python", "-u", "/app/automation_monorepo/scripts/local_mac/worker_entrypoint.py"]
+    networks:
+      - automation-network
+    depends_on:
+      mongodb:
+        condition: service_healthy
+
+  # ── LinkedIn General (sole LinkedIn bot — IT + office/CS) ────────────────
+  linkedin-general:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.local-bot
+    container_name: jobbot-linkedin-general
+    restart: unless-stopped
+    environment:
+      - PYTHONUNBUFFERED=1
+      - BROWSER_VENDOR=chrome
+      - BYPASS_PROXY=0
+      - RUN_IN_BACKGROUND=true
+      - AUTONOMOUS_SUPERVISOR=1
+      - SKIP_USER_START=1
+      - USE_CAPMONSTER_CAPTCHA_SOLVER=1
+      - MONGO_URI=mongodb://admin:${MONGODB_PASSWORD:-changeme}@mongodb:27017/
+      - JOBBOTS_MONGO_DATABASE=jobbots
+      - INDEED_BASE_URL=https://ca.indeed.com
+      - GLASSDOOR_BASE_URL=https://www.glassdoor.ca
+      - BOT_NAME=linkedin_general
+      - CDP_PORT=9241
+      - BOT_INSTANCE_ID=10
+      - JOB_PROFILE=General
+      - CHROME_PROFILE_DIR=/chrome_profiles
+      # LinkedIn auto-login creds (Infisical still primary source; these are fallbacks)
+      - LINKEDIN_EMAIL=${LINKEDIN_EMAIL:-}
+      - LINKEDIN_PASSWORD=${LINKEDIN_PASSWORD:-}
+    volumes:
+      - chrome_profile_linkedin_general:/chrome_profiles
+      - ./automation_monorepo:/app/automation_monorepo:ro
+      - ./master:/app/master:ro
+      - worker_logs:/app/automation_monorepo/logs
+      - worker_data:/app/automation_monorepo/data
+      - worker_supervisor_state:/app/automation_monorepo/data/supervisor
+    command: ["python", "-u", "/app/automation_monorepo/scripts/local_mac/worker_entrypoint.py"]
+    networks:
+      - automation-network
+    depends_on:
+      mongodb:
+        condition: service_healthy
+
+  # ── Workopolis IT ────────────────────────────────────────────────────────
+  workopolis-it:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.local-bot
+    container_name: jobbot-workopolis-it
+    restart: unless-stopped
+    environment:
+      - PYTHONUNBUFFERED=1
+      - BROWSER_VENDOR=chrome
+      - BYPASS_PROXY=0
+      - RUN_IN_BACKGROUND=true
+      - AUTONOMOUS_SUPERVISOR=1
+      - SKIP_USER_START=1
+      - USE_CAPMONSTER_CAPTCHA_SOLVER=1
+      - MONGO_URI=mongodb://admin:${MONGODB_PASSWORD:-changeme}@mongodb:27017/
+      - JOBBOTS_MONGO_DATABASE=jobbots
+      - INDEED_BASE_URL=https://ca.indeed.com
+      - GLASSDOOR_BASE_URL=https://www.glassdoor.ca
+      - BOT_NAME=workopolis_it
+      - CDP_PORT=9230
+      - BOT_INSTANCE_ID=7
+      - JOB_PROFILE=IT
+      - CHROME_PROFILE_DIR=/chrome_profiles
+    volumes:
+      - chrome_profile_workopolis_it:/chrome_profiles
+      - ./automation_monorepo:/app/automation_monorepo:ro
+      - ./master:/app/master:ro
+      - worker_logs:/app/automation_monorepo/logs
+      - worker_data:/app/automation_monorepo/data
+      - worker_supervisor_state:/app/automation_monorepo/data/supervisor
+    command: ["python", "-u", "/app/automation_monorepo/scripts/local_mac/worker_entrypoint.py"]
+    networks:
+      - automation-network
+    depends_on:
+      mongodb:
+        condition: service_healthy
+
+  # ── Google IT (ATS discovery: Greenhouse, Lever, Ashby, BambooHR) ────────
+  google-it:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.local-bot
+    container_name: jobbot-google-it
+    restart: unless-stopped
+    environment:
+      - PYTHONUNBUFFERED=1
+      - BROWSER_VENDOR=chrome
+      - BYPASS_PROXY=0
+      - RUN_IN_BACKGROUND=true
+      - AUTONOMOUS_SUPERVISOR=1
+      - SKIP_USER_START=1
+      - USE_CAPMONSTER_CAPTCHA_SOLVER=1
+      - MONGO_URI=mongodb://admin:${MONGODB_PASSWORD:-changeme}@mongodb:27017/
+      - JOBBOTS_MONGO_DATABASE=jobbots
+      - INDEED_BASE_URL=https://ca.indeed.com
+      - GLASSDOOR_BASE_URL=https://www.glassdoor.ca
+      - BOT_NAME=google_it
+      - CDP_PORT=9250
+      - BOT_INSTANCE_ID=11
+      - JOB_PROFILE=IT
+      - CHROME_PROFILE_DIR=/chrome_profiles
+    volumes:
+      - chrome_profile_google_it:/chrome_profiles
+      - ./automation_monorepo:/app/automation_monorepo:ro
+      - ./master:/app/master:ro
+      - worker_logs:/app/automation_monorepo/logs
+      - worker_data:/app/automation_monorepo/data
+      - worker_supervisor_state:/app/automation_monorepo/data/supervisor
+    command: ["python", "-u", "/app/automation_monorepo/scripts/local_mac/worker_entrypoint.py"]
+    networks:
+      - automation-network
+    depends_on:
+      mongodb:
+        condition: service_healthy
+
+volumes:
+  mongodb_data:
+    driver: local
+  worker_logs:
+    driver: local
+  worker_data:
+    driver: local
+  worker_supervisor_state:
+    driver: local
+  chrome_profile_indeed_it:
+    driver: local
+  chrome_profile_indeed_general:
+    driver: local
+  chrome_profile_glassdoor_it:
+    driver: local
+  chrome_profile_glassdoor_general:
+    driver: local
+  chrome_profile_linkedin_general:
+    driver: local
+  chrome_profile_workopolis_it:
+    driver: local
+  chrome_profile_workopolis_general:
+    driver: local
+  chrome_profile_google_it:
+    driver: local
+
+networks:
+  automation-network:
+    driver: bridge

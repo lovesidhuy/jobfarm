@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+set -euo pipefail
+source /etc/jobbots/runtime.conf
+: "${JOBBOTS_ARTIFACT_BUCKET:?JOBBOTS_ARTIFACT_BUCKET is required}"
+: "${JOBBOTS_ARTIFACT_PREFIX:?JOBBOTS_ARTIFACT_PREFIX is required}"
+: "${JOBBOTS_RESOURCE_PREFIX:?JOBBOTS_RESOURCE_PREFIX is required}"
+if ! mountpoint -q /srv/jobbots; then
+  grep -q '^CLOUD_PROVIDER=gcp' /etc/jobbots/runtime.conf || exit 32
+fi
+if [ "${JOBBOTS_DEPLOYMENT_TIER:-}" = "canary" ] && [[ "$JOBBOTS_RESOURCE_PREFIX" != *canary* ]]; then
+  echo "Refusing canary shutdown for non-canary resource prefix." >&2
+  exit 1
+fi
+
+inject_failure() {
+  local point="$1"
+  [ "${JOBBOTS_FAILURE_INJECTION:-}" != "$point" ] || {
+    echo "Intentional canary failure injection: $point" >&2
+    exit 86
+  }
+}
+
+timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
+run_id="${JOBBOTS_RUN_ID:-$(cat /etc/machine-id)}"
+work="/srv/jobbots/application/backups/${timestamp}"
+archive="${work}/mongodb.archive.gz"
+manifest="${work}/destroy-manifest.json"
+key="backups/mongodb/${timestamp}/mongodb.archive.gz"
+install -d -m 0750 "$work"
+
+systemctl stop jobbots-supervisor.service jobbots-application.service jobbots-resume-workflow.service 2>/dev/null || true
+systemctl is-active --quiet jobbots-mongodb.service
+inject_failure mongodb_shutdown
+docker exec jobbots-mongodb mongodump --host 127.0.0.1 --port 27017 --archive --gzip >"$archive"
+inject_failure mongodump
+test -s "$archive"
+sha256="$(sha256sum "$archive" | awk '{print $1}')"
+inject_failure s3_upload
+key="${JOBBOTS_ARTIFACT_PREFIX}/${key}"
+aws s3 cp "$archive" "s3://${JOBBOTS_ARTIFACT_BUCKET}/${key}" \
+  --metadata "sha256=${sha256},run-id=${run_id}" --only-show-errors
+remote_sha="$(aws s3api head-object --bucket "$JOBBOTS_ARTIFACT_BUCKET" --key "$key" --query 'Metadata.sha256' --output text)"
+inject_failure checksum
+test "$remote_sha" = "$sha256"
+
+inject_failure artifact_upload
+/opt/jobbots/bin/jobbots-artifact-sync
+systemctl stop jobbots-novnc.service 2>/dev/null || true
+systemctl stop jobbots-nstbrowser.service
+systemctl stop jobbots-mongodb.service
+! systemctl is-active --quiet jobbots-mongodb.service
+
+jq -n \
+  --arg run_id "$run_id" \
+  --arg timestamp "$timestamp" \
+  --arg backup_key "$key" \
+  --arg sha256 "$sha256" \
+  '{run_id:$run_id,timestamp:$timestamp,backup_key:$backup_key,sha256:$sha256,database_stopped:true,artifacts_uploaded:true,backup_verified:true}' \
+  >"$manifest"
+aws s3 cp "$manifest" "s3://${JOBBOTS_ARTIFACT_BUCKET}/${JOBBOTS_ARTIFACT_PREFIX}/runs/${run_id}/destroy-manifest.json" --only-show-errors
+aws s3api head-object --bucket "$JOBBOTS_ARTIFACT_BUCKET" --key "${JOBBOTS_ARTIFACT_PREFIX}/runs/${run_id}/destroy-manifest.json" >/dev/null
+cat "$manifest"

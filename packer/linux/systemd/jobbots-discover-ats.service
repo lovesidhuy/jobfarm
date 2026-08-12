@@ -1,0 +1,29 @@
+[Unit]
+Description=Jobbots Greenhouse and Lever IT discovery
+Wants=jobbots-mongodb.service jobbots-nstbrowser.service
+After=jobbots-mongodb.service jobbots-nstbrowser.service jobbots-load-secrets.service
+
+[Service]
+Type=oneshot
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/opt/jobbots/app/automation_monorepo
+EnvironmentFile=/etc/jobbots/secrets.env
+EnvironmentFile=/etc/jobbots/runtime.conf
+EnvironmentFile=-/etc/jobbots/runtime-prod-overrides.conf
+Environment=AUTOMATION_PYTHON=/opt/jobbots/venv/bin/python
+Environment=AUTOMATION_PROFILES_DIR=/srv/jobbots/browser_profiles
+Environment=BROWSER_VENDOR=nstbrowser
+Environment=RUN_IN_BACKGROUND=0
+Environment=MONGODB_URI=mongodb://127.0.0.1:27017
+Environment=JOBBOTS_MONGO_DATABASE=jobbots
+Environment=DISPLAY=:99
+Environment=PYTHONUNBUFFERED=1
+Environment=DISCOVERY_ENGINE=new
+Environment=NSTBROWSER_FORBID_CREATE=1
+ExecStart=/opt/jobbots/bin/jobbots-discover-ats-it
+TimeoutStartSec=14400
+RemainAfterExit=no
+
+[Install]
+WantedBy=multi-user.target

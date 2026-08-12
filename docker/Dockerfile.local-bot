@@ -1,0 +1,89 @@
+# =============================================================================
+# Mac-local Docker Worker Image
+# =============================================================================
+# SeleniumBase UC Mode + Playwright CDP inside a headless container.
+# Chrome user-data profiles are mounted at /chrome_profiles (named volume).
+# 
+# The container runs as non-root for Chrome stability (--no-sandbox is still
+# required inside Docker, but running as non-root avoids the SUID sandbox
+# message and improves stability with user-data dirs).
+# =============================================================================
+
+FROM python:3.11-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+ENV DEBIAN_FRONTEND=noninteractive
+ENV PIP_NO_CACHE_DIR=1
+
+# ── System deps for Chrome + Playwright + build tools ───────────────────────
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    wget \
+    gnupg \
+    unzip \
+    curl \
+    ca-certificates \
+    fonts-liberation \
+    libasound2 \
+    libatk-bridge2.0-0 \
+    libatk1.0-0 \
+    libcups2 \
+    libdbus-1-3 \
+    libdrm2 \
+    libgbm1 \
+    libgtk-3-0 \
+    libnspr4 \
+    libnss3 \
+    libu2f-udev \
+    libvulkan1 \
+    libxcomposite1 \
+    libxdamage1 \
+    libxfixes3 \
+    libxkbcommon0 \
+    libxrandr2 \
+    xdg-utils \
+    xvfb \
+    && rm -rf /var/lib/apt/lists/*
+
+# ── Install Google Chrome Stable ────────────────────────────────────────────
+RUN wget -q -O /tmp/chrome.deb https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends /tmp/chrome.deb \
+    && rm /tmp/chrome.deb \
+    && rm -rf /var/lib/apt/lists/*
+
+# Verify Chrome installed
+RUN google-chrome --version
+
+# ── Create non-root user for Chrome (required for user-data-dir stability) ──
+RUN useradd --create-home --shell /bin/bash botuser \
+    && mkdir -p /chrome_profiles /app/automation_monorepo/logs /app/automation_monorepo/data \
+    && chown -R botuser:botuser /chrome_profiles /app
+
+# ── Install Python packages ─────────────────────────────────────────────────
+# Copy requirements file first for caching
+COPY --chown=botuser:botuser automation_monorepo/requirements.txt /tmp/requirements.txt
+RUN pip install --no-cache-dir -r /tmp/requirements.txt
+
+# Playwright browsers (Chromium is the fallback; SeleniumBase UC uses its own)
+RUN playwright install chromium \
+    && playwright install-deps chromium \
+    && playwright install firefox \
+    && playwright install-deps firefox
+
+# ── SeleniumBase undetected-chromedriver ─────────────────────────────────────
+# seleniumbase installs uc_driver which patches Chrome; must be done post-pip.
+RUN python -m seleniumbase install chromedriver
+
+# ── App setup ───────────────────────────────────────────────────────────────
+WORKDIR /app
+
+# Copy automation monorepo (bind-mounted at runtime, but we need
+# scripts/local_mac/ available at build time for the entrypoint)
+COPY --chown=botuser:botuser automation_monorepo/scripts/local_mac/ /app/automation_monorepo/scripts/local_mac/
+COPY --chown=botuser:botuser automation_monorepo/ /app/automation_monorepo/
+
+USER botuser
+
+# Default command — overridden by each service in compose
+CMD ["python", "-u", "/app/automation_monorepo/scripts/local_mac/worker_entrypoint.py"]

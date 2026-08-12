@@ -1,0 +1,14 @@
+[Unit]
+Description=Jobbots Daily Autonomous Orchestrator Timer
+Documentation=https://github.com/usery/automation
+
+[Timer]
+# Fire every morning at 06:00 AM Local Time
+OnCalendar=*-*-* 06:00:00
+# Ensure timer executes even if VM was turned off when it should have fired
+Persistent=true
+# Stagger fires slightly to avoid race conditions
+RandomizedDelaySec=60
+
+[Install]
+WantedBy=timers.target

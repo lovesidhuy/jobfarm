@@ -1,0 +1,57 @@
+#!/usr/bin/env bash
+# Bounded Indeed GENERAL discovery — office / customer-service hero terms only.
+# Separate queue profile=general from Indeed IT.
+set -euo pipefail
+
+export PATH="/opt/jobbots/venv/bin:/usr/local/bin:/usr/bin:${PATH:-}"
+export PYTHONPATH="/opt/jobbots/app/automation_monorepo${PYTHONPATH:+:$PYTHONPATH}"
+export DISCOVERY_ENGINE="${DISCOVERY_ENGINE:-new}"
+export JOBSPY_FULL_DESCRIPTION="${JOBSPY_FULL_DESCRIPTION:-0}"
+export DISCOVERY_SERP_CACHE="${DISCOVERY_SERP_CACHE:-1}"
+export DISCOVERY_TERM_MEMORY="${DISCOVERY_TERM_MEMORY:-0}"
+export DISCOVERY_EMAIL_REFRESH_HOURS="${DISCOVERY_EMAIL_REFRESH_HOURS:-6}"
+export DISCOVERY_BATCH_AI_MAX="${DISCOVERY_BATCH_AI_MAX:-40}"
+export DISCOVERY_REFRESH_EMAIL_HISTORY="${DISCOVERY_REFRESH_EMAIL_HISTORY:-0}"
+export MONGODB_URI="${MONGODB_URI:-mongodb://127.0.0.1:27017}"
+export JOBBOTS_MONGO_DATABASE="${JOBBOTS_MONGO_DATABASE:-jobbots}"
+export PYTHONUNBUFFERED=1
+
+ROOT="/opt/jobbots/app/automation_monorepo"
+cd "$ROOT"
+
+if [ -z "${JOBBOTS_INDEED_GENERAL_KEYWORDS:-}" ]; then
+  JOBBOTS_INDEED_GENERAL_KEYWORDS="$(/opt/jobbots/venv/bin/python - <<'PY'
+from pathlib import Path
+import importlib.util
+p = Path("/opt/jobbots/app/automation_monorepo/config/general/hero_terms.py")
+spec = importlib.util.spec_from_file_location("gen_hero_terms", p)
+m = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(m)
+print(",".join(m.HERO_SEARCH_TERMS))
+PY
+)"
+fi
+
+MAX="${JOBBOTS_GENERAL_DISCOVERY_MAX_RESULTS:-${JOBBOTS_DISCOVERY_MAX_RESULTS:-15}}"
+FRESH="${JOBBOTS_DISCOVERY_FRESHNESS_DAYS:-7}"
+BATCH_SIZE="${JOBBOTS_INDEED_GENERAL_TERM_BATCH:-3}"
+if ! [[ "$BATCH_SIZE" =~ ^[1-9][0-9]*$ ]]; then BATCH_SIZE=3; fi
+IFS=',' read -r -a TERMS <<< "$JOBBOTS_INDEED_GENERAL_KEYWORDS"
+TOTAL="${#TERMS[@]}"
+echo "[jobbots-discover-indeed-general] keywords=$TOTAL batches_of=$BATCH_SIZE max=$MAX freshness=${FRESH}d"
+
+# Each JobSpy provider call returns only after all of its search cells finish.
+# Running small keyword batches lets the queue receive General leads promptly,
+# rather than leaving application workers idle for the full 25×11 scan.
+for ((start=0, batch_no=1; start<TOTAL; start+=BATCH_SIZE, batch_no++)); do
+  batch=("${TERMS[@]:start:BATCH_SIZE}")
+  batch_keywords="$(IFS=,; echo "${batch[*]}")"
+  echo "[jobbots-discover-indeed-general] batch=$batch_no terms=${#batch[@]}/$TOTAL"
+  /usr/bin/xvfb-run -a --server-args="-screen 0 1280x1024x24" \
+    /opt/jobbots/venv/bin/python scripts/discovery_runner.py \
+    --profile general \
+    --portals indeed \
+    --keyword "$batch_keywords" \
+    --max-results "$MAX" \
+    --freshness-days "$FRESH"
+done

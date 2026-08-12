@@ -1,0 +1,73 @@
+{
+  "manifest_version": 3,
+  "name": "Jobfarm LinkedIn Automation Assistant",
+  "version": "1.0.0",
+  "description": "Local browser automation assistant for LinkedIn Easy Apply workflows.",
+  "permissions": [
+    "activeTab",
+    "tabs",
+    "storage",
+    "scripting"
+  ],
+  "host_permissions": [
+    "https://*.linkedin.com/*",
+    "http://localhost/*",
+    "http://127.0.0.1/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "https://*.linkedin.com/jobs/search*",
+        "https://*.linkedin.com/jobs/view/*",
+        "https://*.linkedin.com/jobs/collections/*"
+      ],
+      "js": [
+        "browser-polyfill.js",
+        "config.js",
+        "libs/ghost-cursor-bundle.js",
+        "libs/user-event-bundle.js",
+        "content/utils.js",
+        "content/sensitive-data.js",
+        "content/answer-policy.js",
+        "content/form-fields.js",
+        "content/backend-api.js",
+        "content/main.js"
+      ],
+      "run_at": "document_end"
+    },
+    {
+      "matches": [
+        "https://*.linkedin.com/jobs/search*",
+        "https://*.linkedin.com/jobs/view/*",
+        "https://*.linkedin.com/jobs/collections/*"
+      ],
+      "js": [
+        "main-world-bridge.js"
+      ],
+      "world": "MAIN",
+      "run_at": "document_end"
+    }
+  ],
+  "background": {
+    "service_worker": "service-worker.js"
+  },
+  "action": {
+    "default_popup": "popup.html"
+  },
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "config.js",
+        "content/utils.js",
+        "content/sensitive-data.js",
+        "content/answer-policy.js",
+        "content/form-fields.js",
+        "content/backend-api.js",
+        "content/main.js"
+      ],
+      "matches": [
+        "https://*.linkedin.com/*"
+      ]
+    }
+  ]
+}

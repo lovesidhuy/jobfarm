@@ -1,0 +1,29 @@
+
+# Google service account (never commit)
+google_service_account.json
+**/google_service_account.json
+# Google OAuth (never commit)
+client_secret.json
+google_oauth_client.json
+token.json
+**/token.json
+**/client_secret.json
+
+# Self-hosted Firecrawl clone (start via scripts/start_firecrawl.sh)
+infra/firecrawl/
+!infra/firecrawl/docker-compose.override.yml
+!infra/firecrawl/.env.example
+
+# Local discovery trash / canaries
+artifacts/
+.firecrawl/
+.hermes/
+scratch/
+tmp/
+1
+__pycache__/
+*.pyc
+node_modules/
+package-lock.json
+package.json
+resume_workflow/

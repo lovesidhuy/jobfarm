@@ -1,0 +1,17 @@
+[Unit]
+Description=Jobbots Telegram Alert and Control Service
+After=network.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=/opt/jobbots/app/automation_monorepo
+EnvironmentFile=/etc/jobbots/secrets.env
+EnvironmentFile=/etc/jobbots/runtime.conf
+ExecStart=/opt/jobbots/venv/bin/python /opt/jobbots/app/automation_monorepo/telegram_bot.py
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

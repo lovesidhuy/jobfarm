@@ -1,0 +1,33 @@
+[Unit]
+Description=Jobbots Indeed IT discovery (oneshot)
+# Wants (not Requires) so NST restart does not thrash-stop discovery mid-cycle
+Wants=jobbots-mongodb.service
+After=jobbots-mongodb.service jobbots-load-secrets.service
+
+[Service]
+Type=oneshot
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/opt/jobbots/app/automation_monorepo
+EnvironmentFile=/etc/jobbots/secrets.env
+EnvironmentFile=/etc/jobbots/runtime.conf
+EnvironmentFile=-/etc/jobbots/runtime-prod-overrides.conf
+Environment=AUTOMATION_PYTHON=/opt/jobbots/venv/bin/python
+Environment=AUTOMATION_PROFILES_DIR=/srv/jobbots/browser_profiles
+Environment=BROWSER_VENDOR=nstbrowser
+Environment=RUN_IN_BACKGROUND=0
+Environment=MONGODB_URI=mongodb://127.0.0.1:27017
+Environment=JOBBOTS_MONGO_DATABASE=jobbots
+Environment=DISPLAY=:99
+Environment=PYTHONUNBUFFERED=1
+Environment=DISCOVERY_ENGINE=new
+Environment=JOBSPY_FULL_DESCRIPTION=0
+# Volume knobs (SERP cache, batch AI, DeepSeek timeout, term memory) live in
+# runtime-prod-overrides.conf only — do not hardcode here or they override prod.
+# Bounded hero-term Indeed discover (NOT full unsupervised supervisor loop)
+ExecStart=/opt/jobbots/bin/jobbots-discover-indeed-it
+TimeoutStartSec=3600
+RemainAfterExit=no
+
+[Install]
+WantedBy=multi-user.target
