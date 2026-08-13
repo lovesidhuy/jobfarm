@@ -1,26 +1,27 @@
 """Personal profile data used to fill application forms (General profile template)."""
+import os
 
 # Legal name
-first_name = "Alex"                 # Your first name in quotes Eg: "Alex"
-middle_name = ""                     # Your middle name in quotes Eg: "", ""
-last_name = "Smith"                # Your last name in quotes Eg: "Smith"
+first_name = os.getenv("CANDIDATE_FIRST_NAME", "Alex")
+middle_name = os.getenv("CANDIDATE_MIDDLE_NAME", "")
+last_name = os.getenv("CANDIDATE_LAST_NAME", "Smith")
 
 # Phone number (required), make sure it is valid with country code
-phone_number = "+1-555-0199"        # Enter your phone number in quotes Eg: "+1-555-0199"
-email_address = "alex.smith@example.com"
+phone_number = os.getenv("CANDIDATE_PHONE", "+1-555-0199")
+email_address = os.getenv("CANDIDATE_EMAIL", "alex.smith@example.com")
 
 # Current city
-current_city = "Surrey"          # Vancouver, Surrey, Seattle, Toronto, etc.
+current_city = os.getenv("CANDIDATE_CITY", "Surrey")
 
 # Address
-street = "100 Main Street"
-state = "BC"
-zipcode = "V6B 1A1"
-country = "Canada"
+street = os.getenv("CANDIDATE_STREET", "100 Main Street")
+state = os.getenv("CANDIDATE_STATE", "BC")
+zipcode = os.getenv("CANDIDATE_ZIPCODE", "V6B 1A1")
+country = os.getenv("CANDIDATE_COUNTRY", "Canada")
 
 ## Equal Opportunity / Voluntary Self-Identification questions
-ethnicity = "Decline"              # "Decline", "Hispanic/Latino", "American Indian or Alaska Native", "Asian", "Black or African American", "Native Hawaiian or Other Pacific Islander", "White", "Other"
-gender = "Male"                    # "Male", "Female", "Other", "Decline" or ""
-pronouns = "He/Him/His"
-disability_status = "Decline"      # "Yes", "No", "Decline"
-veteran_status = "Decline"         # "Yes", "No", "Decline"
+ethnicity = os.getenv("CANDIDATE_ETHNICITY", "Decline")
+gender = os.getenv("CANDIDATE_GENDER", "Male")
+pronouns = os.getenv("CANDIDATE_PRONOUNS", "He/Him/His")
+disability_status = os.getenv("CANDIDATE_DISABILITY", "Decline")
+veteran_status = os.getenv("CANDIDATE_VETERAN", "Decline")

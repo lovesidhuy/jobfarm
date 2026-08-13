@@ -142,3 +142,5 @@ def test_align_capmonster_matches_browser_on_cf_heavy():
     align_capmonster_proxy_env(env)
     assert "proxy-cheap" in env["CAPMONSTER_PROXY_URL"] or "thehub" in env["CAPMONSTER_PROXY_URL"]
     assert env["CAPMONSTER_PROXY_URL"] == env["PROXY_URL"] == env["NSTBROWSER_PROXY_URL"]
+    # CapSolver must share the same sticky egress as the browser for cf_clearance.
+    assert env.get("CAPSOLVER_PROXY_URL") == env["CAPMONSTER_PROXY_URL"]

@@ -148,6 +148,15 @@ _GENERAL_TITLE_SIGNALS = (
     "administrative coordinator", "admin assistant", "data entry", "order entry",
     "call centre", "call center", "contact centre", "contact center",
     "appointment scheduler", "scheduling coordinator", "operations assistant",
+    # Volume-oriented General expansion: these are still bounded to desk,
+    # service, coordination, and clerical work.  The hard-reject list below
+    # continues to exclude retail-floor, food, driving, warehouse, trades,
+    # and licensed clinical work.
+    "administrative", "administrator", "coordinator", "co-ordinator",
+    "clerk", "assistant", "representative", "agent", "concierge",
+    "intake", "scheduler", "dispatcher", "service advisor",
+    "support specialist", "client advisor", "customer advisor",
+    "records", "billing", "accounts receivable", "accounts payable",
 )
 
 # Floor retail / clinical / trades noise that matches "customer service" or
@@ -165,7 +174,7 @@ _GENERAL_HARD_REJECT_MARKERS = (
 )
 
 _GENERAL_SENIORITY_MARKERS = (
-    "manager", "director", "senior", "sr.", "lead", "supervisor",
+    "manager", "director", "supervisor",
     "principal", "head of", "vice president", "vp ",
 )
 

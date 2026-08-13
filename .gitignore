@@ -24,6 +24,7 @@ logs/
 *.log
 chrome-profile-*/
 browser_profiles/
+*crawlee_storage/request_queues/test-queue-*
 
 # User Profile Personal Data (keep template/example)
 profiles/my_profile/

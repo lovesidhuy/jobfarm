@@ -231,18 +231,36 @@ def _select_stored_document(select: Any, *, preferred_name: str = "") -> str:
 
 def _upload_resume_after_server_rejection(page: Any) -> bool:
     """Upload the configured IT résumé only after Job Bank rejects its saved copy."""
+    from jobbots.paths import PROFILES_ROOT
     resume_path = MONOREPO_ROOT / "all resumes" / "ls_resume_it.pdf"
     if not resume_path.is_file():
+        resume_path = PROFILES_ROOT / "resumes" / "sample_resume_it.pdf"
+    if not resume_path.is_file():
         return False
-    file_input = page.locator("#docUploadSPForm input[type='file'], form[action*='directapply-resume-coverletter'] input[type='file']").first
+    file_input = page.locator("#docUploadSPForm\\:docUploadSPInput, #docUploadSPForm input[type='file'], form[action*='directapply-resume-coverletter'] input[type='file']").first
     if file_input.count() == 0:
         return False
     file_input.set_input_files(str(resume_path))
-    upload = page.locator("#docUploadSPForm input[type='submit'][value='Upload'], #docUploadSPForm button:has-text('Upload')").first
+    upload = page.locator("#docUploadSPForm\\:btnSubmitDocument, #docUploadSPForm input[type='submit'][value='Upload'], #docUploadSPForm button:has-text('Upload')").first
     if upload.count() == 0:
         return False
-    upload.click(timeout=15000)
-    page.wait_for_timeout(1200)
+    try:
+        with page.expect_navigation(wait_until="domcontentloaded", timeout=30000):
+            upload.click(timeout=15000)
+    except Exception:
+        try:
+            upload.click(timeout=5000)
+        except Exception:
+            return False
+    page.wait_for_timeout(800)
+    # The JSF upload rerenders the select.  Select the just-uploaded / saved
+    # resume again before the final application submit.
+    resume_select = page.locator("#docUploadSPForm\\:select_resume").first
+    if resume_select.count() > 0:
+        _select_stored_document(
+            resume_select,
+            preferred_name=os.getenv("JOBBANK_RESUME_NAME", "sample_resume_it.pdf"),
+        )
     return True
 
 
@@ -388,7 +406,7 @@ def apply_jobbank_direct_queue_job(job: dict[str, Any], *, dry_run: bool = False
 
         # Step 1: Application instructions -> Continue.
         if _has_text(page, "Application instructions - Direct Apply"):
-            instruction_continue = "form[action*='/jobsearch/directapply/'] a.btn.btn-primary"
+            instruction_continue = "a:has-text('Continue'), form[action*='/jobsearch/directapply/'] a.btn.btn-primary"
             if page.locator(instruction_continue).count() > 0:
                 _advance_direct_step(page, instruction_continue, "**/jobsearch/directapply-*")
             else:

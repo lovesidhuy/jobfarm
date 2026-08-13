@@ -142,21 +142,25 @@ cd jobfarm
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
+pip install -e .
 playwright install chromium
-cp .env.example .env
 ```
 
 ### 2. Interactive Onboarding
-Run the interactive setup wizard to configure your profile, select your AI backend, and authenticate your portal sessions:
+Run the interactive setup assistant to initialize your profile and verify your configuration:
 ```bash
-python scripts/onboard.py
+python scripts/onboard.py --check
+```
+To configure candidate details:
+```bash
+python scripts/onboard.py --init-profile
 ```
 > See [docs/AI_ONBOARDING_AND_PII_GUIDE.md](docs/AI_ONBOARDING_AND_PII_GUIDE.md) for the complete AI and candidate profile verification runbook.
 
 ### 3. Launch Local Infrastructure
 Start the local MongoDB job queue and metrics store:
 ```bash
-docker-compose -f docker-compose.local.yml up -d
+docker-compose -f docker-compose.local.yml up -d mongodb
 ```
 
 ### 4. Run the Farm
@@ -165,8 +169,12 @@ Launch autonomous discovery and application execution:
 # Autonomous Multi-Portal Supervisor
 python automation_monorepo/supervisor.py
 
+# Or run discovery / application cycles via unified CLI:
+jobbots discover --once
+jobbots apply --once
+
 # Or run a single portal target:
-python -m jobbots.app.cli run --portal indeed --profile it
+jobbots bot indeed_it
 ```
 
 ---

@@ -97,38 +97,43 @@ def _check_qa_banks() -> dict[str, Any]:
 
 
 def _check_resumes() -> dict[str, Any]:
-    from jobbots.paths import MONOREPO_ROOT
+    from jobbots.paths import MONOREPO_ROOT, PROFILES_ROOT
 
     resume_dir = MONOREPO_ROOT / "all resumes"
     pdfs = sorted(p.name for p in resume_dir.glob("*.pdf")) if resume_dir.is_dir() else []
+    if not pdfs:
+        p_resumes = PROFILES_ROOT / "resumes"
+        if p_resumes.is_dir():
+            pdfs = sorted(p.name for p in p_resumes.glob("*.pdf"))
     return {"ok": bool(pdfs), "resumes": pdfs}
 
 
 def _check_secrets() -> dict[str, Any]:
-    """Require runtime secrets locally; allow empty secret bag in pure CI smoke.
-
-    Travis injects Infisical/secure env so presence is True there. GitHub
-    Actions lint/smoke does not always inject the same secrets — treat an
-    all-missing bag as OK under CI so ``doctor --quick`` stays green without
-    shipping credentials into the public workflow.
-    """
+    """Require runtime secrets locally; allow empty secret bag in pure CI smoke."""
     import os
 
     from jobbots.core.profiles import resolve_secret
+    from jobbots.core.llm_backend.ai.llm_gateway import list_llm_gateway_chain
 
-    required = ["MONGODB_URI", "TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID", "OPENROUTER_API_KEY"]
-    present = {name: bool(resolve_secret(name)) for name in required}
-    if all(present.values()):
-        return {"ok": True, "present": present}
+    mongo_uri = resolve_secret("MONGODB_URI") or os.environ.get("MONGODB_URI", "mongodb://localhost:27017")
+    llm_chain = list_llm_gateway_chain()
+    has_llm = bool(llm_chain)
+
+    present = {
+        "MONGODB_URI": bool(mongo_uri),
+        "LLM_GATEWAY": has_llm,
+        "TELEGRAM_ALERTS": bool(resolve_secret("TELEGRAM_BOT_TOKEN") and resolve_secret("TELEGRAM_CHAT_ID")),
+        "PROXIES": bool(resolve_secret("WEBSHARE_PROXY_USERNAME") or resolve_secret("WEBSHARE_PROXY_URL")),
+    }
+
+    ok = bool(mongo_uri) and has_llm
+
     ci = bool(
         os.environ.get("CI")
         or os.environ.get("TRAVIS")
         or os.environ.get("GITHUB_ACTIONS")
         or os.environ.get("CONTINUOUS_INTEGRATION")
     )
-    # GitHub Actions smoke often has zero/partial secrets; Travis injects the
-    # full bag. In CI, only fail when an operator explicitly demanded secrets
-    # (JOBBOTS_DOCTOR_REQUIRE_SECRETS=1). Production workers are not CI.
     if ci and not _truthy(os.environ.get("JOBBOTS_DOCTOR_REQUIRE_SECRETS")):
         return {
             "ok": True,
@@ -136,7 +141,7 @@ def _check_secrets() -> dict[str, Any]:
             "skipped": "ci_optional_secrets",
             "note": "set JOBBOTS_DOCTOR_REQUIRE_SECRETS=1 to enforce secret presence in CI",
         }
-    return {"ok": all(present.values()), "present": present}
+    return {"ok": ok, "present": present}
 
 
 def _truthy(value: str | None) -> bool:

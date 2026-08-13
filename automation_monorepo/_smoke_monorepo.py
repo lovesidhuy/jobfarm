@@ -1,5 +1,10 @@
 import os
 import sys
+from pathlib import Path
+
+BASE_DIR = Path(__file__).resolve().parent
+if str(BASE_DIR) not in sys.path:
+    sys.path.insert(0, str(BASE_DIR))
 
 def smoke_test(bot_script, bot_name, job_profile):
     print(f"--- Smoke Testing {bot_name} (Profile: {job_profile}) ---")
@@ -18,9 +23,9 @@ def smoke_test(bot_script, bot_name, job_profile):
         print(f"Loaded questions.py for {job_profile}. desired_salary={q.desired_salary}")
 
         # Check if bot script compiles
-        bot_path = os.path.join("bots", bot_script)
-        with open(bot_path, "r") as f:
-            compile(f.read(), bot_path, "exec")
+        bot_path = BASE_DIR / "bots" / bot_script
+        with open(bot_path, "r", encoding="utf-8") as f:
+            compile(f.read(), str(bot_path), "exec")
         print(f"Successfully compiled {bot_script}")
 
     except Exception as e:

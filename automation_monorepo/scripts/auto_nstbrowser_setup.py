@@ -52,8 +52,10 @@ BOT_NAMES = (
 )
 
 STARTUP_URL_BY_BOT = {
-    "indeed_it": "https://ca.indeed.com/account/login",
-    "indeed_general": "https://ca.indeed.com/account/login",
+    # Preserve an existing authenticated session: Indeed's login route can
+    # mask it, whereas the homepage reliably exposes logged-in chrome.
+    "indeed_it": "https://ca.indeed.com/",
+    "indeed_general": "https://ca.indeed.com/",
     "glassdoor_it": "https://www.glassdoor.ca/profile/login_input.htm",
     "glassdoor_general": "https://www.glassdoor.ca/profile/login_input.htm",
     "workopolis_it": "https://www.workopolis.com/",

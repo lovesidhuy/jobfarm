@@ -73,16 +73,19 @@ db.createUser({
   ]
 });
 
-db = db.getSiblingDB('automation_monitoring');
+db = db.getSiblingDB('jobbots');
 db.createUser({
-  user: 'monitoring_user',
+  user: 'jobbots_user',
   pwd: 'changeme',
   roles: [
     {
       role: 'readWrite',
-      db: 'automation_monitoring'
+      db: 'jobbots'
     }
   ]
 });
+db.job_applications.createIndex({ url: 1 }, { unique: true });
+db.job_applications.createIndex({ portal: 1, status: 1, profile: 1 });
+db.job_applications.createIndex({ status: 1, lease_expires_at: 1 });
 
 print('MongoDB databases and users created successfully!');

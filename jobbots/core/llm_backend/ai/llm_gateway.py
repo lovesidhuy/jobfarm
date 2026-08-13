@@ -101,6 +101,15 @@ def _openai_gateway(secrets_llm_model: str = "") -> LlmGateway | None:
     return LlmGateway("openai", base_url, openai_key, model)
 
 
+def _gemini_gateway(secrets_llm_model: str = "") -> LlmGateway | None:
+    gemini_key = _secret("GEMINI_API_KEY")
+    if not gemini_key:
+        return None
+    model = (secrets_llm_model or _secret("GEMINI_MODEL") or "gemini-1.5-flash").strip()
+    base_url = (_secret("GEMINI_BASE_URL") or "https://generativelanguage.googleapis.com/v1beta/openai/").rstrip("/")
+    return LlmGateway("gemini", base_url, gemini_key, model)
+
+
 def _ollama_gateway(secrets_llm_model: str = "") -> LlmGateway | None:
     base_url = (_secret("OLLAMA_BASE_URL") or "http://localhost:11434/v1").rstrip("/")
     model = (secrets_llm_model or _secret("OLLAMA_MODEL") or "llama3.2").strip()
@@ -117,6 +126,7 @@ def list_llm_gateway_chain(
     Configurable via LLM_PROVIDER in env or Infisical:
       - 'ollama' / 'local' -> local Ollama first
       - 'openai' -> official OpenAI first
+      - 'gemini' -> Google Gemini first
       - 'groq' -> fast Groq inference first
       - 'deepseek' -> official DeepSeek first
       - 'openrouter' / 'openrouter_force' -> OpenRouter first
@@ -131,6 +141,7 @@ def list_llm_gateway_chain(
     deepseek = _deepseek_official_gateway(secrets_llm_model)
     groq = _groq_gateway(secrets_llm_model)
     openai = _openai_gateway(secrets_llm_model)
+    gemini = _gemini_gateway(secrets_llm_model)
     ollama = _ollama_gateway(secrets_llm_model)
 
     chain: list[LlmGateway] = []
@@ -154,6 +165,12 @@ def list_llm_gateway_chain(
         _add(deepseek)
     elif configured == "openai":
         _add(openai)
+        _add(gemini)
+        _add(openrouter)
+        _add(deepseek)
+    elif configured == "gemini":
+        _add(gemini)
+        _add(openai)
         _add(openrouter)
         _add(deepseek)
     elif configured == "groq":
@@ -175,6 +192,7 @@ def list_llm_gateway_chain(
         _add(deepseek)
         _add(groq)
         _add(openai)
+        _add(gemini)
 
     if not chain:
         # Last resort: secrets.py custom / Ollama-style endpoint

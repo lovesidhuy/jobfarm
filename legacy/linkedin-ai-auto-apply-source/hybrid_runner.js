@@ -449,6 +449,45 @@ async function detectLinkedInAuthWall(page) {
 }
 
 /**
+ * Detect LinkedIn's daily Easy Apply limit modal or banner.
+ */
+async function detectLinkedInDailyEasyApplyLimit(page) {
+    const patterns = [
+        /you(?:'|’)ve reached today(?:'|’)s easy apply limit/i,
+        /you have reached today(?:'|’)s easy apply limit/i,
+        /reached today(?:'|’)s application limit/i,
+        /you have reached (?:your )?(?:daily|today(?:'|’)s) (?:easy apply |application )?limit/i,
+        /limit the number of (?:easy apply|applications)/i,
+    ];
+    const contexts = [page, ...page.frames().filter(frame => frame !== page.mainFrame())];
+    for (const ctx of contexts) {
+        try {
+            const text = await ctx.evaluate(() => {
+                const shadow = document.querySelector('#interop-outlet')?.shadowRoot;
+                return `${document.body?.innerText || ''}\n${shadow?.innerText || shadow?.textContent || ''}`
+                    .replace(/\s+/g, ' ').trim().slice(0, 20000);
+            });
+            if (patterns.some(pattern => pattern.test(text))) {
+                return text.slice(0, 500);
+            }
+        } catch (_) {}
+    }
+    return '';
+}
+
+function recordLinkedInDailyLimit(message) {
+    const flag = (process.env.LINKEDIN_DAILY_LIMIT_FLAG || '').trim();
+    if (!flag) return;
+    try {
+        fs.mkdirSync(path.dirname(flag), { recursive: true });
+        fs.writeFileSync(flag, `${new Date().toISOString()}\n${String(message || '').slice(0, 1000)}\n`, 'utf8');
+        console.warn(`🚫 LinkedIn daily-limit marker written: ${flag}`);
+    } catch (err) {
+        console.warn(`⚠️ Could not write LinkedIn daily-limit marker: ${err.message}`);
+    }
+}
+
+/**
  * Dismiss LinkedIn intermediate splash / "select to continue" / cookie / app-promo
  * screens that appear before the real feed when the NST profile is already logged in.
  * Search-mode warm path usually lands on /feed after a click; leased direct-apply
@@ -1140,6 +1179,20 @@ async function run() {
 
             const authWall = await detectLinkedInAuthWall(page);
             if (authWall) throw new Error(authWall);
+
+            const dailyLimitMessage = await detectLinkedInDailyEasyApplyLimit(page);
+            if (dailyLimitMessage) {
+                recordLinkedInDailyLimit(dailyLimitMessage);
+                result = {
+                    status: 'daily_limit_reached',
+                    result_url: page.url(),
+                    reason: 'LinkedIn daily Easy Apply limit reached: ' + dailyLimitMessage,
+                };
+                console.warn('🚫 LinkedIn reports that its daily Easy Apply limit has been reached.');
+                if (queueResultFile) fs.writeFileSync(queueResultFile, JSON.stringify(result));
+                await cleanupBrowser(browser);
+                process.exit(0);
+            }
 
             // Already-applied fast path: stale queue entries (7d-freshness
             // discovery) often show "Applied … ago / See application" in the

@@ -36,8 +36,10 @@ from core.browser.nst_accounts import (  # noqa: E402
 from core.secret_manager import get_secret, resolve_proxy_url  # noqa: E402
 
 STARTUP_URL_BY_BOT = {
-    "indeed_it": "https://ca.indeed.com/account/login",
-    "indeed_general": "https://ca.indeed.com/account/login",
+    # The login route hides authenticated chrome even when the profile has a
+    # valid session.  Hydrate Indeed cookies from the homepage instead.
+    "indeed_it": "https://ca.indeed.com/",
+    "indeed_general": "https://ca.indeed.com/",
     "glassdoor_it": "https://www.glassdoor.ca/profile/login_input.htm",
     "glassdoor_general": "https://www.glassdoor.ca/profile/login_input.htm",
     "workopolis_it": "https://www.workopolis.com/",

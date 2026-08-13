@@ -114,6 +114,63 @@ def classify_outcome(result,dispatched_method,attempts,max_attempts):
         return "retry",""
     return "dead",""
 
+
+def _linkedin_limit_flag_path() -> Path:
+    """Shared, date-stamped circuit-breaker for the sole LinkedIn account."""
+    raw = os.environ.get("LINKEDIN_DAILY_LIMIT_FLAG", "").strip()
+    return Path(raw) if raw else ROOT / "logs" / "linkedin_general" / "daily_limit_reached.flag"
+
+
+def _linkedin_stop_reason(q: JobQueue) -> str:
+    """Return a stop reason when LinkedIn must not receive another submission."""
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    flag = _linkedin_limit_flag_path()
+    try:
+        # Use a rolling 24-hour hold, not midnight in an arbitrary timezone:
+        # that is conservative if LinkedIn's own quota is rolling.
+        if flag.is_file():
+            stamp = flag.read_text(encoding="utf-8", errors="ignore").splitlines()[0].strip()
+            detected_at = datetime.fromisoformat(stamp.replace("Z", "+00:00"))
+            if detected_at.tzinfo is None:
+                detected_at = detected_at.replace(tzinfo=timezone.utc)
+            if datetime.now(timezone.utc) - detected_at.astimezone(timezone.utc) < timedelta(hours=24):
+                return "LinkedIn reported its daily Easy Apply limit"
+    except (OSError, ValueError, IndexError):
+        pass
+
+    try:
+        cap = int(os.environ.get("JOBBOTS_LINKEDIN_DAILY_CAP", "10"))
+    except ValueError:
+        cap = 10
+    if cap <= 0:
+        return ""
+    applied = q.jobs.count_documents({
+        "portal": "linkedin", "status": "applied",
+        "applied_at": {"$gte": datetime.now(timezone.utc) - timedelta(hours=24)},
+    })
+    if applied >= cap:
+        return f"LinkedIn safety cap reached ({applied}/{cap} confirmed submissions)"
+    return ""
+
+
+def _defer_linkedin_until_tomorrow(q: JobQueue, job: dict, reason: str) -> None:
+    """Release a leased LinkedIn job without consuming retries for 24 hours."""
+    now = datetime.now(timezone.utc)
+    tomorrow = now + timedelta(hours=24)
+    q.jobs.update_one(
+        {"_id": job["id"], "status": "leased", "lease_owner": job["lease_owner"]},
+        {"$set": {
+            "status": "retry", "lease_owner": None, "lease_expires_at": None,
+            "next_attempt_at": tomorrow, "updated_at": now,
+            "last_error": reason, "outcome_reason": reason,
+        }},
+    )
+    try:
+        q._event(job["id"], "linkedin_daily_pause", job["lease_owner"], {"reason": reason})
+    except Exception:
+        pass
+
+
 def ensure_resume_server_healthy():
     import requests
     resume_server_base = "http://127.0.0.1:3001"
@@ -190,6 +247,18 @@ def _is_metro_vancouver_queue_job(job) -> bool:
     Also rejects search-centre false positives where location/metadata say
     Metro Van but the title pins the job to Quebec / Mexico / Toronto-only.
     """
+    # Job Bank country-wide mode is explicit and only covers authenticated
+    # Direct Apply postings.
+    metadata = job.get("metadata") or {}
+    if (
+        str(os.environ.get("JOBBOTS_JOBBANK_ALLOW_CANADA") or "").strip().lower()
+        in {"1", "true", "yes", "on"}
+        and str(job.get("portal") or "").strip().lower() == "jobbank"
+        and str(metadata.get("application_method") or "").strip().lower()
+        in {"direct_apply", "jobbank_direct_apply"}
+    ):
+        return True
+
     try:
         from core.discovery.classification.location_policy import (
             REGION_METRO_VAN,
@@ -500,6 +569,7 @@ def dispatch(job,result_path,*,keep_browser=False):
         script=ROOT/"bots"/"linkedin_general.py"
         if not script.is_file(): return 2,f"missing bot entry point {script}"
         env["LINKEDIN_DIRECT_JOB_URL"]=job["url"]
+        env["LINKEDIN_DAILY_LIMIT_FLAG"] = str(_linkedin_limit_flag_path())
         # Mongo job docs include datetime fields; default=str keeps direct-job JSON valid.
         env["LINKEDIN_DIRECT_JOB_JSON"]=json.dumps(job, default=str)
         # Explicit title/company for hybrid form fill / logging (avoid Target Company placeholders).
@@ -622,6 +692,17 @@ def main():
             profile=(claim_profile or args.profile or ""),
             status="idle",
         )
+        # Circuit breaker applies to the entire sole-account LinkedIn worker,
+        # before it can lease another row.  The page-level detector below
+        # creates the marker when LinkedIn displays its own daily-limit UI.
+        if linkedin_sole_worker:
+            linkedin_stop = _linkedin_stop_reason(q)
+            if linkedin_stop:
+                print(f"[Worker] LinkedIn paused: {linkedin_stop}. No further Easy Apply submissions today.")
+                if args.once or explicit_ids:
+                    return
+                time.sleep(max(60, int(args.poll_seconds or 15)))
+                continue
         if _defer_secondary and _is_secondary_only and not pending_ids:
             primary_n = _primary_browser_active_count()
             if primary_n > 0:
@@ -660,6 +741,14 @@ def main():
         if not job:
             if args.once or explicit_ids: return
             time.sleep(args.poll_seconds); continue
+        if (job.get("portal") or "").strip().lower() == "linkedin":
+            linkedin_stop = _linkedin_stop_reason(q)
+            if linkedin_stop:
+                print(f"[Worker] LinkedIn lease deferred: {linkedin_stop}")
+                _defer_linkedin_until_tomorrow(q, job, linkedin_stop)
+                if args.once or explicit_ids:
+                    return
+                continue
         q.heartbeat(worker,"application",portal=job["portal"],profile=job["profile"],status="working",current_job_id=job["id"])
         def training_event(event, **details):
             try:
@@ -725,6 +814,8 @@ def main():
             # Safeguard #6: clear terminal outcomes; unverified jobs never retry forever.
             if action=="applied":
                 q.complete(job["id"],job["lease_owner"],result_url,reason=reason)
+            elif action == "daily_limit_reached":
+                _defer_linkedin_until_tomorrow(q, job, reason or "LinkedIn daily Easy Apply limit reached")
             elif action=="already_applied":
                 q.already_applied(job["id"],job["lease_owner"],result_url,reason=reason)
             elif action=="skipped":
