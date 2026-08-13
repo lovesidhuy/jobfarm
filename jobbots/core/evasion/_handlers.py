@@ -696,27 +696,59 @@ def handle_cloudflare_challenge(page, sb, timeout: int = _CF_TIMEOUT_DEFAULT,
     if _attempt_pyautogui_cf():
         return True
 
-    # ── Strategy 3: CapSolver CF (Turnstile token + AntiCloudflare cf_clearance) ──
+    # ── Strategy 3: CapSolver CF (AntiCloudflare cf_clearance + Turnstile) ──
+    # CapMonster is dead on the farm; CapSolver is the primary CF path for
+    # Indeed/Glassdoor/Workopolis managed challenges ("Additional Verification").
+    # Prefer clearance first (CapMonster-parity) unless solver is explicitly
+    # "turnstile" / "seleniumbase".
     if _capsolver_client_key():
-        # Managed challenges (Indeed "Additional Verification Required") often have
-        # no Turnstile sitekey in the DOM — prefer AntiCloudflareTask first when
-        # CAPTCHA_CLOUDFLARE_SOLVER=capsolver, then fall back to Turnstile token.
-        prefer_clearance = solver in {"capsolver", "anticloudflare", "cf_clearance"}
+        prefer_clearance = solver not in {
+            "turnstile",
+            "seleniumbase",
+            "capmonster_turnstile",
+        }
         if prefer_clearance:
-            _cap_log("Trying CapSolver AntiCloudflare (cf_clearance)...", start)
-            log_training_event("captcha_attempt_method", captcha_type="cloudflare",
-                               method="capsolver_anticloudflare",
-                               page=page_dom_snapshot(page, limit=30))
-            if solve_cloudflare_challenge_with_capsolver(page, timeout=120):
-                if not is_cloudflare_challenge(_get_latest_live_page(page)):
-                    log_training_event("captcha_attempt_finished", captcha_type="cloudflare",
-                                       status="cleared", method="capsolver_anticloudflare",
-                                       elapsed_seconds=round(time.time() - start, 1),
-                                       page=page_dom_snapshot(_get_latest_live_page(page), limit=30))
-                    return True
-                _cap_log("CapSolver cf_clearance applied but challenge still visible.", start)
-            else:
-                _cap_log("CapSolver AntiCloudflare did not clear Cloudflare; trying Turnstile...", start)
+            retries = 2
+            try:
+                retries = int(os.getenv("CAPTCHA_CF_CAPSOLVER_RETRIES", "2"))
+            except Exception:
+                retries = 2
+            for attempt in range(1, retries + 1):
+                _cap_log(
+                    f"Trying CapSolver AntiCloudflare cf_clearance "
+                    f"(attempt {attempt}/{retries})...",
+                    start,
+                )
+                log_training_event(
+                    "captcha_attempt_method",
+                    captcha_type="cloudflare",
+                    method=f"capsolver_anticloudflare_attempt_{attempt}",
+                    page=page_dom_snapshot(page, limit=30),
+                )
+                if solve_cloudflare_challenge_with_capsolver(page, timeout=120):
+                    latest = _get_latest_live_page(page)
+                    if not is_cloudflare_challenge(latest):
+                        log_training_event(
+                            "captcha_attempt_finished",
+                            captcha_type="cloudflare",
+                            status="cleared",
+                            method="capsolver_anticloudflare",
+                            elapsed_seconds=round(time.time() - start, 1),
+                            page=page_dom_snapshot(latest, limit=30),
+                        )
+                        return True
+                    _cap_log(
+                        "CapSolver cf_clearance applied but challenge still visible; "
+                        "retrying…",
+                        start,
+                    )
+                else:
+                    _cap_log(
+                        f"CapSolver AntiCloudflare attempt {attempt} did not clear Cloudflare.",
+                        start,
+                    )
+                if attempt < retries:
+                    time.sleep(2)
 
         _cap_log("Trying CapSolver Turnstile solver...", start)
         log_training_event("captcha_attempt_method", captcha_type="cloudflare",
@@ -731,7 +763,20 @@ def handle_cloudflare_challenge(page, sb, timeout: int = _CF_TIMEOUT_DEFAULT,
                 return True
         _cap_log("CapSolver Turnstile did not clear Cloudflare; trying fallback...", start)
 
-    # CapMonster fallback (only if active)
+        if not prefer_clearance:
+            _cap_log("Trying CapSolver AntiCloudflare (cf_clearance) fallback...", start)
+            log_training_event("captcha_attempt_method", captcha_type="cloudflare",
+                               method="capsolver_anticloudflare",
+                               page=page_dom_snapshot(page, limit=30))
+            if solve_cloudflare_challenge_with_capsolver(page, timeout=120):
+                if not is_cloudflare_challenge(_get_latest_live_page(page)):
+                    log_training_event("captcha_attempt_finished", captcha_type="cloudflare",
+                                       status="cleared", method="capsolver_anticloudflare",
+                                       elapsed_seconds=round(time.time() - start, 1),
+                                       page=page_dom_snapshot(_get_latest_live_page(page), limit=30))
+                    return True
+
+    # CapMonster fallback (only if key still active and explicitly enabled)
     if solver in {"capmonster", "turnstile", "capmonster_turnstile"} and _cf_capmonster_viable():
             # Read retry count (default 2)
             retries = 2
@@ -870,6 +915,9 @@ def handle_recaptcha_challenge(page, sb, timeout: int = _RECAPTCHA_TIMEOUT_DEFAU
     sb = _recover_seleniumbase_session(sb)
     start = time.time()
     _cap_log("⚠ reCAPTCHA image challenge detected.", start)
+    if _indeed_submit_button_ready(page):
+        _cap_log("Submit button is already ready/clickable — returning to submit flow immediately.", start)
+        return True
     allow_manual = _env_truthy("CAPTCHA_ALLOW_MANUAL_FALLBACK", _ALLOW_MANUAL_FALLBACK)
     use_capmonster = _use_capmonster_setting()
     _cap_log(
@@ -925,6 +973,9 @@ def handle_recaptcha_challenge(page, sb, timeout: int = _RECAPTCHA_TIMEOUT_DEFAU
         return True
 
     if not allow_manual:
+        if _indeed_submit_button_ready(page):
+            _cap_log("Submit button is ready — returning to submit flow.", start)
+            return True
         _cap_log("reCAPTCHA manual fallback disabled by config.", start)
         return False
 
@@ -975,6 +1026,10 @@ def handle_recaptcha_challenge(page, sb, timeout: int = _RECAPTCHA_TIMEOUT_DEFAU
         except Exception:
             pass
 
+    if _indeed_submit_button_ready(page):
+        _cap_log("Submit button is ready after timeout — returning to submit flow.", start)
+        return True
+
     _cap_log(f"✗ reCAPTCHA timed out after {_elapsed(start)} — continuing anyway.", start)
     return False
 
@@ -995,6 +1050,9 @@ def handle_recaptcha_widget(page, sb, timeout: int = _RECAPTCHA_TIMEOUT_DEFAULT,
                             run_in_background: bool = False) -> bool:
     sb = _recover_seleniumbase_session(sb)
     print_lg("  [CAPTCHA] reCAPTCHA v2 checkbox widget detected.")
+    if _indeed_submit_button_ready(page):
+        print_lg("  [CAPTCHA] Submit button is already ready/clickable — returning to submit flow.")
+        return True
     allow_gui    = _env_truthy("CAPTCHA_ALLOW_GUI_FALLBACK", _ALLOW_GUI_FALLBACK)
     allow_manual = _env_truthy("CAPTCHA_ALLOW_MANUAL_FALLBACK", _ALLOW_MANUAL_FALLBACK)
     use_capmonster = _use_capmonster_setting()
@@ -1009,7 +1067,7 @@ def handle_recaptcha_widget(page, sb, timeout: int = _RECAPTCHA_TIMEOUT_DEFAULT,
                                status="cleared", method="capsolver_recaptcha",
                                page=page_dom_snapshot(page, limit=30))
             return True
-        print_lg("  [CAPTCHA] CapSolver did not clear reCAPTCHA widget; trying checkbox fallback.")
+        print_lg("  [CAPTCHA] CapSolver did not clear reCAPTCHA widget; checking fallbacks.")
     elif use_capmonster:
         print_lg("  [CAPTCHA] Trying CapMonster token solve first...")
         log_training_event("captcha_attempt_method", captcha_type="recaptcha_widget",
@@ -1020,38 +1078,25 @@ def handle_recaptcha_widget(page, sb, timeout: int = _RECAPTCHA_TIMEOUT_DEFAULT,
                                status="cleared", method="capmonster_recaptcha",
                                page=page_dom_snapshot(page, limit=30))
             return True
-        print_lg("  [CAPTCHA] CapMonster did not clear reCAPTCHA widget; trying checkbox fallback.")
+        print_lg("  [CAPTCHA] CapMonster did not clear reCAPTCHA widget; checking fallbacks.")
     else:
         print_lg("  [CAPTCHA] No API solver active; use the browser if manual verification appears.")
 
-    clicked = False
-    try:
-        if _click_recaptcha_checkbox_if_visible(page, timeout=5000):
-            print_lg("  [CAPTCHA] ✓ Playwright clicked reCAPTCHA checkbox via frame_locator!")
-            clicked = True
-    except Exception as e:
-        print_lg(f"  [CAPTCHA] Playwright frame_locator click failed: {e}")
+    # Do not click the checkbox or trigger SeleniumBase's GUI helpers here.
+    # Either action can launch a visual image challenge over the form.  The
+    # caller can continue only after a valid response is observed, or pause
+    # for a user to complete the challenge in the browser.
+    print_lg("  [CAPTCHA] Not clicking visible reCAPTCHA widget or opening GUI fallback.")
 
-    if not clicked and allow_gui:
-        _sync_sb_driver(sb, page)
-        for fn, name, kwargs in [
-            (_sb_uc_gui_click_rc,      "uc_gui_click_rc(blind=True)",      {"blind": True}),
-            (_sb_uc_gui_click_captcha, "uc_gui_click_captcha(blind=True)", {"blind": True}),
-            (_sb_uc_gui_handle_rc,     "uc_gui_handle_rc",                 {}),
-        ]:
-            if fn is None or sb is None:
-                continue
-            try:
-                fn(sb, **kwargs)
-                print_lg(f"  [CAPTCHA] ✓ Checkbox click fired via {name}")
-                clicked = True
-                break
-            except Exception as e:
-                print_lg(f"  [CAPTCHA] {name} raised: {e}")
-    elif not clicked and not allow_gui:
-        print_lg("  [CAPTCHA] SeleniumBase reCAPTCHA GUI fallback disabled by config.")
+    if _indeed_submit_button_ready(page):
+        print_lg("  [CAPTCHA] Submit button is ready/clickable — returning to submit flow.")
+        return True
 
-    time.sleep(4)
+    time.sleep(2)
+
+    if _indeed_submit_button_ready(page):
+        print_lg("  [CAPTCHA] Submit button is ready/clickable — returning to submit flow.")
+        return True
 
     if is_recaptcha_challenge(page):
         print_lg("  [CAPTCHA] Image challenge appeared (buses / fire hydrants / pumps…)")
@@ -1061,7 +1106,10 @@ def handle_recaptcha_widget(page, sb, timeout: int = _RECAPTCHA_TIMEOUT_DEFAULT,
         print_lg("  [CAPTCHA] ✓ reCAPTCHA widget solved automatically!")
         return True
 
-    time.sleep(4)
+    time.sleep(2)
+    if _indeed_submit_button_ready(page):
+        print_lg("  [CAPTCHA] Submit button is ready/clickable — returning to submit flow.")
+        return True
     if is_recaptcha_challenge(page):
         return handle_recaptcha_challenge(page, sb, timeout=timeout, run_in_background=run_in_background)
     if not is_recaptcha_widget_present(page):
@@ -1069,6 +1117,9 @@ def handle_recaptcha_widget(page, sb, timeout: int = _RECAPTCHA_TIMEOUT_DEFAULT,
         return True
 
     if not allow_manual:
+        if _indeed_submit_button_ready(page):
+            print_lg("  [CAPTCHA] Submit button is ready/clickable — returning to submit flow.")
+            return True
         print_lg("  [CAPTCHA] reCAPTCHA manual checkbox fallback disabled by config.")
         return False
 
@@ -1091,6 +1142,9 @@ def handle_recaptcha_widget(page, sb, timeout: int = _RECAPTCHA_TIMEOUT_DEFAULT,
     deadline = time.time() + timeout
     while time.time() < deadline:
         time.sleep(_POLL_INTERVAL)
+        if _indeed_submit_button_ready(page):
+            print_lg("  [CAPTCHA] Submit button became ready during manual wait — returning to submit flow.")
+            return True
         if is_recaptcha_challenge(page):
             print_lg("  [CAPTCHA] Image challenge appeared — solving…")
             return handle_recaptcha_challenge(page, sb, timeout=timeout // 2,
@@ -1098,6 +1152,10 @@ def handle_recaptcha_widget(page, sb, timeout: int = _RECAPTCHA_TIMEOUT_DEFAULT,
         if not is_recaptcha_widget_present(page):
             print_lg("  [CAPTCHA] ✓ reCAPTCHA widget resolved.")
             return True
+
+    if _indeed_submit_button_ready(page):
+        print_lg("  [CAPTCHA] Submit button is ready after timeout — returning to submit flow.")
+        return True
 
     print_lg("  [CAPTCHA] ✗ reCAPTCHA widget timed out — continuing anyway.")
     return False

@@ -1,3 +1,4 @@
+import os
 from ._bootstrap import *  # noqa: F403
 from pathlib import Path
 from jobbots.core.evasion._handlers import (
@@ -264,7 +265,7 @@ def _extract_page_questions_schema(page) -> list[dict]:
     """Scrapes active question fields from the current DOM context."""
     schema = []
     try:
-        from jobbots.core.shared_modules.indeed.navigation import _get_question_context
+        from modules.indeed.navigation import _get_question_context
     except ImportError:
         def _get_question_context(pg, element):
             return element.get_attribute("name") or element.get_attribute("id") or "question"
@@ -491,13 +492,26 @@ def _is_submit_button_ready(page) -> bool:
         return bool(page.evaluate(
             """
             () => {
-                const btn = document.querySelector(
-                    "button[data-testid='submit-application-button'], button[type='submit']"
-                );
+                const selectors = [
+                    "button[data-testid='submit-application-button']",
+                    "button[data-testid*='submit']",
+                    "button[data-testid*='Submit']",
+                    "button[type='submit']",
+                    "button[aria-label*='Submit']",
+                    "button[aria-label*='submit']",
+                ];
+                let btn = document.querySelector(selectors.join(","));
+                if (!btn) {
+                    const buttons = Array.from(document.querySelectorAll("button"));
+                    btn = buttons.find((button) => {
+                        const text = (button.innerText || button.textContent || "").trim().toLowerCase();
+                        return text.includes("submit your application") || text.includes("submit application") || text === "submit";
+                    });
+                }
                 if (!btn) return false;
                 const style = window.getComputedStyle(btn);
                 const disabled = Boolean(btn.disabled || btn.getAttribute("aria-disabled") === "true");
-                const hidden = style.display === "none" || style.visibility === "hidden";
+                const hidden = style.display === "none" || style.visibility === "hidden" || style.opacity === "0";
                 return !disabled && !hidden;
             }
             """
@@ -806,6 +820,7 @@ def _wait_for_review_submit_ready(page, *, timeout_s: float = 60.0):
     """Poll until Submit appears (or already-applied / submitted). Returns updated page."""
     deadline = time.time() + max(5.0, float(timeout_s))
     last_log = 0.0
+    extension_preflight_attempted = False
     while time.time() < deadline:
         try:
             if _is_submitted(page) or _is_already_applied_notice(page):
@@ -815,6 +830,20 @@ def _wait_for_review_submit_ready(page, *, timeout_s: float = 60.0):
             if _is_submit_button_ready(page):
                 # Submit exists even while preparing text briefly remains.
                 return page
+            # Handle a normal visible reCAPTCHA anchor *before* Indeed turns it
+            # into the image bframe.  The installed browser extension observes
+            # this state and injects the response; once the bframe opens, a
+            # separate API task is often required and we lose that fast path.
+            if not extension_preflight_attempted and is_recaptcha_widget_present(page) and not is_recaptcha_challenge(page):
+                extension_preflight_attempted = True
+                try:
+                    from jobbots.core.evasion._capsolver import solve_recaptcha_with_capsolver
+                    print_lg("  [SmartApply] Visible reCAPTCHA anchor found — extension preflight before Submit.")
+                    if solve_recaptcha_with_capsolver(page, timeout=45):
+                        print_lg("  [SmartApply] Extension preflight supplied reCAPTCHA; waiting for Submit to enable.")
+                        continue
+                except Exception as exc:
+                    print_lg(f"  [SmartApply] Extension preflight could not run: {type(exc).__name__}")
         except Exception:
             pass
         now = time.time()
@@ -911,6 +940,18 @@ def _try_clear_captcha_with_retries(page, sb, *, context: str, run_in_background
     Does not abandon the job after a single CapMonster miss — reCAPTCHA
     widgets often stay visible while token inject is still in flight.
     """
+    # Unattended farm: CapSolver is the only live solver. Give it enough rounds
+    # for sticky-proxy enterprise → standard V2 fallback (CapMonster-parity),
+    # but cap so one job cannot burn 8+ minutes of poll budget.
+    try:
+        if os.environ.get("SKIP_USER_START") == "1" or os.environ.get("AUTONOMOUS_SUPERVISOR") == "1":
+            default_rounds = "3"
+            rounds = min(
+                int(rounds),
+                int(os.environ.get("SMARTAPPLY_CAPTCHA_ROUNDS", default_rounds) or default_rounds),
+            )
+    except Exception:
+        rounds = min(int(rounds), 3)
     for attempt in range(1, max(1, rounds) + 1):
         try:
             check_and_handle_captcha(
@@ -985,9 +1026,9 @@ def _click_submit_button(page) -> bool:
                 el.click(timeout=8000)
                 print_lg("  [SmartApply] Submit click completed.")
                 return True
-            except PlaywrightError as click_err:
+            except Exception as click_err:
                 print_lg(
-                    "  [SmartApply] Native submit click failed: "
+                    "  [SmartApply] Native submit click intercepted/failed: "
                     f"{type(click_err).__name__}: {str(click_err).splitlines()[0][:140]}"
                 )
                 try:
@@ -1007,9 +1048,48 @@ def _click_submit_button(page) -> bool:
                         "  [SmartApply] Submit JS fallback failed: "
                         f"{type(js_err).__name__}: {str(js_err).splitlines()[0][:140]}"
                     )
-                    return False
+                    # Selector evaluation fallback
+                    try:
+                        page.evaluate(
+                            """
+                            (sel) => {
+                                const btn = document.querySelector(sel);
+                                if (btn) {
+                                    btn.click();
+                                }
+                            }
+                            """,
+                            selector
+                        )
+                        return True
+                    except Exception:
+                        return False
         except Exception:
             continue
+
+    # Text-based query fallback if selector loop missed
+    try:
+        clicked = page.evaluate(
+            """
+            () => {
+                const buttons = Array.from(document.querySelectorAll("button"));
+                const btn = buttons.find((button) => {
+                    const text = (button.innerText || button.textContent || "").trim().toLowerCase();
+                    return text.includes("submit your application") || text.includes("submit application");
+                });
+                if (!btn) return false;
+                btn.scrollIntoView({block: "center", inline: "center"});
+                btn.focus();
+                btn.click();
+                return true;
+            }
+            """
+        )
+        if clicked:
+            print_lg("  [SmartApply] Submit clicked via text-content JS fallback.")
+            return True
+    except Exception:
+        pass
 
     return False
 
@@ -1062,9 +1142,9 @@ def _fallback_cover_letter(title: str, company: str, location: str = "") -> str:
         f"I am reliable, detail-oriented, and eager to contribute to your team. "
         f"I would welcome the opportunity to discuss how my skills can support {co}.\n\n"
         f"Sincerely,\n"
-        f"Jane Doe\n"
-        f"555-0199\n"
-        f"user@example.com"
+        f"Lovepreet Sidhu\n"
+        f"778-908-3286\n"
+        f"lovepreetsidhu8173@gmail.com"
     )
 
 
@@ -1086,14 +1166,14 @@ def _generate_short_cover_letter(title: str, company: str, location: str = "") -
         f"Location: {loc or 'Metro Vancouver, BC'}. "
         "Write a complete short cover letter to paste into an Indeed SmartApply "
         "text field. Plain text only (no markdown, no bullets). 120–180 words. "
-        "Candidate: Jane Doe, Surrey BC; BTech IT Network Administration & "
+        "Candidate: Lovepreet Sidhu, Surrey BC; BTech IT Network Administration & "
         "Security at KPU; AWS Solutions Architect Associate; 3 years Bell Canada "
         "tech support; skills networking, AWS, Windows/Linux, security, help desk, QA. "
-        "Start with Dear Hiring Manager, end with Sincerely, Jane Doe and phone."
+        "Start with Dear Hiring Manager, end with Sincerely, Lovepreet Sidhu and phone."
     )
     ai_text = ""
     try:
-        from jobbots.core.shared_modules.indeed.ai import _ai_answer
+        from modules.indeed.ai import _ai_answer
         ai_text = (
             _ai_answer(
                 question=(
@@ -1121,7 +1201,7 @@ def _generate_short_cover_letter(title: str, company: str, location: str = "") -
         if "dear" not in static.lower()[:40]:
             letter = (
                 f"Dear Hiring Manager,\n\n{static.strip()}\n\n"
-                f"Sincerely,\nJane Doe\n555-0199"
+                f"Sincerely,\nLovepreet Sidhu\n778-908-3286"
             )
         else:
             letter = static
@@ -1139,7 +1219,7 @@ def _generate_short_cover_letter(title: str, company: str, location: str = "") -
     if "Dear" not in letter[:60]:
         letter = f"Dear Hiring Manager,\n\n{letter}"
     if "Sincerely" not in letter and "Regards" not in letter:
-        letter = f"{letter.rstrip()}\n\nSincerely,\nJane Doe\n555-0199"
+        letter = f"{letter.rstrip()}\n\nSincerely,\nLovepreet Sidhu\n778-908-3286"
     if len(letter) > 1800:
         letter = letter[:1790].rsplit(" ", 1)[0] + "…"
     return letter
@@ -1454,7 +1534,7 @@ def _automate_smartapply(page, sb, job_id: str, title: str) -> tuple:
                 advanced = _click_smartapply_continue(page)
                 if not advanced:
                     try:
-                        from jobbots.core.shared_modules.indeed.navigation import _click_continue_force as _ccf
+                        from modules.indeed.navigation import _click_continue_force as _ccf
                         advanced = _ccf(page)
                     except Exception:
                         advanced = False
@@ -1471,7 +1551,7 @@ def _automate_smartapply(page, sb, job_id: str, title: str) -> tuple:
                 advanced = _click_smartapply_continue(page)
                 if not advanced:
                     try:
-                        from jobbots.core.shared_modules.indeed.navigation import _click_continue_force as _ccf
+                        from modules.indeed.navigation import _click_continue_force as _ccf
                         advanced = _ccf(page)
                     except Exception:
                         advanced = False
@@ -1497,7 +1577,7 @@ def _automate_smartapply(page, sb, job_id: str, title: str) -> tuple:
                 )
                 company = (_current_job_meta or {}).get("company", "")
                 location = (_current_job_meta or {}).get("location", "")
-                from jobbots.core.shared_modules.indeed.persistence import _save_skipped
+                from modules.indeed.persistence import _save_skipped
                 _save_skipped(
                     job_id, title, company, location,
                     "Cover letter textarea fill failed",
@@ -1841,80 +1921,86 @@ def _automate_smartapply(page, sb, job_id: str, title: str) -> tuple:
                     pause_before_submit = False
 
             # ── STEP 1: Solve reCAPTCHA v2 widget FIRST ──────────────────
-            # The anchor iframe (title='reCAPTCHA') is confirmed ALWAYS visible
-            # on the review page (from HTML dump analysis).  It MUST be solved
-            # before clicking Submit or the form submission is silently blocked.
-            if is_recaptcha_expired(page):
-                print_lg("  [SmartApply] reCAPTCHA expired — solving again BEFORE Submit…")
-                if not handle_recaptcha_widget(page, sb, run_in_background=run_in_background):
-                    print_lg("  [SmartApply] ✗ reCAPTCHA solve failed — skipping this job.")
-                    return False, application_link
-                time.sleep(max(0.8, _T_NAV * 2))
-                page = try_recover_page(page)
-                if _captcha_still_blocking(page):
-                    print_lg("  [SmartApply] ✗ reCAPTCHA still blocking — skipping this job.")
-                    return False, application_link
-                review_attempts = 0
-                skip_continue = True
-                continue
-
-            if is_recaptcha_challenge(page):
-                print_lg("  [SmartApply] reCAPTCHA image challenge open — solving BEFORE Submit…")
-                if not handle_recaptcha_challenge(page, sb, timeout=90, run_in_background=run_in_background):
-                    print_lg("  [SmartApply] ✗ reCAPTCHA image solve failed — skipping this job.")
-                    return False, application_link
-                time.sleep(max(0.8, _T_NAV * 2))
-                page = try_recover_page(page)
-                if _captcha_still_blocking(page):
-                    print_lg("  [SmartApply] ✗ reCAPTCHA still blocking — skipping this job.")
-                    return False, application_link
-                review_captcha_cycles += 1
-                if review_captcha_cycles > max_review_captcha_cycles:
-                    _screenshot(page, job_id, "Repeated CAPTCHA before submit")
-                    print_lg("  [SmartApply] ✗ reCAPTCHA keeps reopening before submit — aborting this job.")
-                    log_training_event("smartapply_finished", status="repeated_review_captcha",
-                                       job={**_current_job_meta, "job_id": job_id, "title": title},
-                                       diagnostics=_smartapply_review_diagnostics(page),
-                                       application_link=application_link,
-                                       page=page_dom_snapshot(page, limit=50))
-                    return False, application_link
-                if _is_submit_button_ready(page):
-                    print_lg("  [SmartApply] CAPTCHA solved and Submit is ready — submitting now.")
-                elif is_recaptcha_challenge(page) or is_recaptcha_expired(page):
-                    print_lg("  [SmartApply] reCAPTCHA still not clear — will retry before submitting")
+            # If the Submit button is ALREADY enabled and ready (blue/clickable),
+            # the captcha is solved or non-blocking (or a honeypot/residual iframe).
+            # Do NOT stall or skip the job — proceed straight to clicking Submit.
+            if _is_submit_button_ready(page):
+                print_lg("  [SmartApply] Submit button is ready and clickable (blue) — proceeding directly to submit.")
+            else:
+                if is_recaptcha_expired(page):
+                    print_lg("  [SmartApply] reCAPTCHA expired — solving again BEFORE Submit…")
+                    if not handle_recaptcha_widget(page, sb, run_in_background=run_in_background):
+                        if not _is_submit_button_ready(page):
+                            print_lg("  [SmartApply] ✗ reCAPTCHA solve failed and Submit not ready — skipping this job.")
+                            return False, application_link
+                    time.sleep(max(0.8, _T_NAV * 2))
+                    page = try_recover_page(page)
+                    if _captcha_still_blocking(page):
+                        print_lg("  [SmartApply] ✗ reCAPTCHA still blocking — skipping this job.")
+                        return False, application_link
+                    review_attempts = 0
                     skip_continue = True
                     continue
 
-            if is_recaptcha_widget_present(page):
-                if _is_submit_button_ready(page):
-                    print_lg("  [SmartApply] reCAPTCHA checkbox visible, but Submit is enabled — trying Submit first.")
-                else:
-                    print_lg("  [SmartApply] reCAPTCHA v2 widget detected — solving BEFORE Submit…")
-                    if not handle_recaptcha_widget(page, sb, run_in_background=run_in_background):
-                        print_lg("  [SmartApply] ✗ reCAPTCHA widget solve failed — skipping this job.")
-                        return False, application_link
-                    time.sleep(max(0.8, _T_NAV * 2))   # let reCAPTCHA settle briefly
+                if is_recaptcha_challenge(page):
+                    print_lg("  [SmartApply] reCAPTCHA image challenge open — solving BEFORE Submit…")
+                    if not handle_recaptcha_challenge(page, sb, timeout=90, run_in_background=run_in_background):
+                        if not _is_submit_button_ready(page):
+                            print_lg("  [SmartApply] ✗ reCAPTCHA image solve failed and Submit not ready — skipping this job.")
+                            return False, application_link
+                    time.sleep(max(0.8, _T_NAV * 2))
                     page = try_recover_page(page)
                     if _captcha_still_blocking(page):
                         print_lg("  [SmartApply] ✗ reCAPTCHA still blocking — skipping this job.")
                         return False, application_link
                     review_captcha_cycles += 1
-                    if review_captcha_cycles > max_review_captcha_cycles:
-                        _screenshot(page, job_id, "Repeated CAPTCHA widget")
-                        print_lg("  [SmartApply] ✗ reCAPTCHA widget keeps returning — aborting this job.")
+                    if review_captcha_cycles > max_review_captcha_cycles and not _is_submit_button_ready(page):
+                        _screenshot(page, job_id, "Repeated CAPTCHA before submit")
+                        print_lg("  [SmartApply] ✗ reCAPTCHA keeps reopening before submit — aborting this job.")
                         log_training_event("smartapply_finished", status="repeated_review_captcha",
                                            job={**_current_job_meta, "job_id": job_id, "title": title},
                                            diagnostics=_smartapply_review_diagnostics(page),
                                            application_link=application_link,
                                            page=page_dom_snapshot(page, limit=50))
                         return False, application_link
-                    # Re-check: if still stuck return to outer loop for retry
                     if _is_submit_button_ready(page):
-                        print_lg("  [SmartApply] CAPTCHA widget solved and Submit is ready — submitting now.")
-                    elif is_recaptcha_widget_present(page) or is_recaptcha_challenge(page) or is_recaptcha_expired(page):
-                        print_lg("  [SmartApply] reCAPTCHA widget still present after solve attempt — will retry")
+                        print_lg("  [SmartApply] CAPTCHA solved and Submit is ready — submitting now.")
+                    elif is_recaptcha_challenge(page) or is_recaptcha_expired(page):
+                        print_lg("  [SmartApply] reCAPTCHA still not clear — will retry before submitting")
                         skip_continue = True
                         continue
+
+                if is_recaptcha_widget_present(page):
+                    if _is_submit_button_ready(page):
+                        print_lg("  [SmartApply] reCAPTCHA checkbox visible, but Submit is enabled — trying Submit first.")
+                    else:
+                        print_lg("  [SmartApply] reCAPTCHA v2 widget detected — solving BEFORE Submit…")
+                        if not handle_recaptcha_widget(page, sb, run_in_background=run_in_background):
+                            if not _is_submit_button_ready(page):
+                                print_lg("  [SmartApply] ✗ reCAPTCHA widget solve failed and Submit not ready — skipping this job.")
+                                return False, application_link
+                        time.sleep(max(0.8, _T_NAV * 2))   # let reCAPTCHA settle briefly
+                        page = try_recover_page(page)
+                        if _captcha_still_blocking(page):
+                            print_lg("  [SmartApply] ✗ reCAPTCHA still blocking — skipping this job.")
+                            return False, application_link
+                        review_captcha_cycles += 1
+                        if review_captcha_cycles > max_review_captcha_cycles and not _is_submit_button_ready(page):
+                            _screenshot(page, job_id, "Repeated CAPTCHA widget")
+                            print_lg("  [SmartApply] ✗ reCAPTCHA widget keeps returning — aborting this job.")
+                            log_training_event("smartapply_finished", status="repeated_review_captcha",
+                                               job={**_current_job_meta, "job_id": job_id, "title": title},
+                                               diagnostics=_smartapply_review_diagnostics(page),
+                                               application_link=application_link,
+                                               page=page_dom_snapshot(page, limit=50))
+                            return False, application_link
+                        # Re-check: if still stuck return to outer loop for retry
+                        if _is_submit_button_ready(page):
+                            print_lg("  [SmartApply] CAPTCHA widget solved and Submit is ready — submitting now.")
+                        elif is_recaptcha_widget_present(page) or is_recaptcha_challenge(page) or is_recaptcha_expired(page):
+                            print_lg("  [SmartApply] reCAPTCHA widget still present after solve attempt — will retry")
+                            skip_continue = True
+                            continue
 
             # ── STEP 2: Click Submit ──────────────────────────────────────
             if _click_submit_button(page):

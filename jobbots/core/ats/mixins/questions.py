@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -248,12 +249,36 @@ def _resolve_for_field(
     """
     global _AI_CALLS_USED
     try:
-        from jobbots.core.shared_modules.form_answers import resolve_answer
+        if "core.shared_modules.form_answers" in sys.modules:
+            resolve_answer = sys.modules["core.shared_modules.form_answers"].resolve_answer
+        else:
+            from jobbots.core.shared_modules.form_answers import resolve_answer
     except Exception:
         return None
 
     clean_q = _clean_question_text(question) or (question or "").strip()
     opt_list = [str(o).strip() for o in (options or []) if str(o).strip()]
+
+    # Employment-history widgets often expose only a bare "Title" label.
+    # That is candidate identity, not a job-specific screening question, so
+    # resolve it before the generic bank/LLM path can return no answer.
+    normalized_q = re.sub(r"[^a-z0-9]+", " ", clean_q.lower()).strip()
+    if normalized_q in {"title", "current title", "current role", "job title"}:
+        current_title = str(profile.get("current_title") or "IT Student").strip()
+        if current_title:
+            _log_answer_event(
+                question=clean_q,
+                options=opt_list or None,
+                value=current_title,
+                source="profile_current_title",
+                required=required,
+                filled=True,
+                portal=portal,
+                url=url,
+                score=1.0,
+            )
+            return [current_title]
+
     use_ai = _should_use_ai(clean_q, opt_list or None, required=required)
     resolved_hint = hint or _ats_ai_hint(clean_q, opt_list or None)
 

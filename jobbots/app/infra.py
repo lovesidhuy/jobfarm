@@ -125,10 +125,16 @@ def audit() -> dict[str, Any]:
     registered_paths: set[str] = set()
 
     for name, meta in INFRA_MODULES.items():
-        for rel in meta["paths"] + meta["drivers"]:
+        for rel in meta["paths"]:
             if not (REPO_ROOT / rel).exists():
                 problems.append(f"{name}: missing {rel}")
             registered_paths.add(rel)
+        for rel in meta["drivers"]:
+            # In open-source releases, private CI deployment workflows are excluded.
+            if not (REPO_ROOT / rel).exists() and not rel.startswith(".github/workflows/"):
+                problems.append(f"{name}: missing {rel}")
+            if (REPO_ROOT / rel).exists():
+                registered_paths.add(rel)
 
     # Every workflow must parse.
     workflows = sorted((REPO_ROOT / ".github" / "workflows").glob("*.yml"))

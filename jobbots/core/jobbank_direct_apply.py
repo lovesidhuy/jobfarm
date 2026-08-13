@@ -115,6 +115,14 @@ def _has_text(page: Any, text: str) -> bool:
 
 
 def _already_applied(page: Any) -> bool:
+    # A live Direct Apply control is definitive evidence that this posting is
+    # still actionable.  Do not let a historical match/banner elsewhere on
+    # the page turn it into a false completed application.
+    try:
+        if page.locator("#btn-direct-apply, a[href*='/jobsearch/directapply/']").count() > 0:
+            return False
+    except Exception:
+        pass
     try:
         return application_already_submitted_text(page.locator("body").inner_text(timeout=5000) or "")
     except Exception:
@@ -213,7 +221,29 @@ def _select_stored_document(select: Any, *, preferred_name: str = "") -> str:
         candidates[0],
     )
     select.select_option(value=chosen[0])
+    # Job Bank's JSF page must receive the native change event; simply setting
+    # the select value can leave the server-side resume field empty and produce
+    # the misleading "File must be selected" error for the separate uploader.
+    select.dispatch_event("change")
+    select.evaluate("el => { el.blur(); el.focus(); }")
     return chosen[1]
+
+
+def _upload_resume_after_server_rejection(page: Any) -> bool:
+    """Upload the configured IT résumé only after Job Bank rejects its saved copy."""
+    resume_path = MONOREPO_ROOT / "all resumes" / "ls_resume_it.pdf"
+    if not resume_path.is_file():
+        return False
+    file_input = page.locator("#docUploadSPForm input[type='file'], form[action*='directapply-resume-coverletter'] input[type='file']").first
+    if file_input.count() == 0:
+        return False
+    file_input.set_input_files(str(resume_path))
+    upload = page.locator("#docUploadSPForm input[type='submit'][value='Upload'], #docUploadSPForm button:has-text('Upload')").first
+    if upload.count() == 0:
+        return False
+    upload.click(timeout=15000)
+    page.wait_for_timeout(1200)
+    return True
 
 
 def _answer_jobbank_screening(page: Any, job: dict[str, Any]) -> tuple[bool, str]:
@@ -430,6 +460,14 @@ def apply_jobbank_direct_queue_job(job: dict[str, Any], *, dry_run: bool = False
         submit = "#docUploadSPForm\\:btnSubmit, button[name*='btnSubmit'], input[name*='btnSubmit']"
         _click(page, submit)
         page.wait_for_timeout(800)
+        # Some postings show a saved résumé but still reject it server-side.
+        # Only then use the visible native uploader and repeat the final submit.
+        if _has_text(page, "File must be selected"):
+            if not _upload_resume_after_server_rejection(page):
+                shot = _screenshot(page, job, "resume_upload_required")
+                return False, f"jobbank_resume_upload_required{':' + shot if shot else ''}", page.url
+            _click(page, submit)
+            page.wait_for_timeout(800)
         page.wait_for_function(
             "() => document.body && document.body.innerText.includes('Your application was submitted to the employer')",
             timeout=30000,

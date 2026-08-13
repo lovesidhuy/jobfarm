@@ -1,4 +1,4 @@
-"""Shared Cloudflare / CapMonster env defaults."""
+"""Shared Cloudflare / CapSolver env defaults."""
 from __future__ import annotations
 
 import os
@@ -12,9 +12,10 @@ def is_nstbrowser_vendor(env: MutableMapping[str, str] | None = None) -> bool:
 
 def apply_standard_captcha_env(env: MutableMapping[str, str] | None = None) -> MutableMapping[str, str]:
     """
-    Indeed IT/Nstbrowser Cloudflare path:
-      CapMonster cf_clearance via the configured browser proxy.
+    Indeed / Glassdoor / Workopolis Cloudflare path:
+      CapSolver AntiCloudflareTask (cf_clearance) via the browser sticky proxy.
 
+    CapMonster keys are dead on the farm; CapSolver is the only live provider.
     Uses setdefault so .env / parent shell overrides still win.
     """
     target = os.environ if env is None else env
@@ -24,14 +25,19 @@ def apply_standard_captcha_env(env: MutableMapping[str, str] | None = None) -> M
         "CAPTCHA_ALLOW_GUI_FALLBACK": "0",
         "CAPTCHA_ALLOW_MANUAL_FALLBACK": "0",
         "CAPTCHA_SKIP_TURNSTILE_TOKEN_MODE": "1",
-        "CAPTCHA_CF_CAPMONSTER_RETRIES": "2",
+        "CAPTCHA_CF_CAPMONSTER_RETRIES": "0",
         "CAPTCHA_CF_SKIP_RELOAD": "1",
         "CAPTCHA_CF_PATIENT_WAIT": "3",
         "BYPASS_PROXY": "0",
-        "USE_CAPMONSTER_CAPTCHA_SOLVER": "1",
-        "CAPTCHA_USE_CAPMONSTER": "1",
-        "CAPTCHA_CLOUDFLARE_SOLVER": "capmonster",
+        # CapSolver primary; CapMonster off unless explicitly re-enabled.
+        "USE_CAPSOLVER": "1",
+        "USE_CAPMONSTER_CAPTCHA_SOLVER": "0",
+        "CAPTCHA_USE_CAPMONSTER": "0",
+        "CAPTCHA_CLOUDFLARE_SOLVER": "capsolver",
         "CAPTCHA_CAPMONSTER_PROXYLESS_FALLBACK": "0",
+        # ATS may use ProxyLess; Indeed/Glassdoor code path ignores this unless
+        # CAPSOLVER_RECAPTCHA_PROXYLESS_FALLBACK=force (token IP must match browser).
+        "CAPSOLVER_RECAPTCHA_PROXYLESS_FALLBACK": "1",
     }
     for key, value in defaults.items():
         target.setdefault(key, value)
@@ -47,14 +53,16 @@ def apply_standard_captcha_env_overwrite(env: MutableMapping[str, str] | None = 
             "CAPTCHA_ALLOW_GUI_FALLBACK": "0",
             "CAPTCHA_ALLOW_MANUAL_FALLBACK": "0",
             "CAPTCHA_SKIP_TURNSTILE_TOKEN_MODE": "1",
-            "CAPTCHA_CF_CAPMONSTER_RETRIES": "2",
+            "CAPTCHA_CF_CAPMONSTER_RETRIES": "0",
             "CAPTCHA_CF_SKIP_RELOAD": "1",
             "CAPTCHA_CF_PATIENT_WAIT": "3",
             "BYPASS_PROXY": "0",
-            "USE_CAPMONSTER_CAPTCHA_SOLVER": "1",
-            "CAPTCHA_USE_CAPMONSTER": "1",
-            "CAPTCHA_CLOUDFLARE_SOLVER": "capmonster",
+            "USE_CAPSOLVER": "1",
+            "USE_CAPMONSTER_CAPTCHA_SOLVER": "0",
+            "CAPTCHA_USE_CAPMONSTER": "0",
+            "CAPTCHA_CLOUDFLARE_SOLVER": "capsolver",
             "CAPTCHA_CAPMONSTER_PROXYLESS_FALLBACK": "0",
+            "CAPSOLVER_RECAPTCHA_PROXYLESS_FALLBACK": "1",
         }
     )
     return target
@@ -64,9 +72,10 @@ def captcha_bootstrap_message(env: MutableMapping[str, str] | None = None) -> st
     target = os.environ if env is None else env
     vendor = (target.get("BROWSER_VENDOR") or "chrome").strip().lower()
     nst_id = (target.get("NSTBROWSER_PROFILE_ID") or "").strip()
+    solver = (target.get("CAPTCHA_CLOUDFLARE_SOLVER") or "capsolver").strip().lower()
     message = (
-        "[Bootstrap] CF path: CapMonster cf_clearance via browser proxy "
-        "(no SeleniumBase GUI, pyautogui, or manual fallback)."
+        f"[Bootstrap] CF path: {solver} cf_clearance via browser proxy "
+        "(CapSolver AntiCloudflareTask; no SeleniumBase GUI / pyautogui / manual)."
     )
     if vendor in ("nstbrowser", "nst") and nst_id:
         return f"[Bootstrap] Nstbrowser profile: {nst_id}\n{message}"

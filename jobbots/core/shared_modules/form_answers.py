@@ -84,6 +84,10 @@ def load_profile() -> dict[str, Any]:
             "I'm based in Surrey/BC and available for the hybrid model near North Vancouver."
         ),
         "current_company": "Currently seeking opportunities",
+        # ATS work-history blocks frequently label this field only "Title".
+        # Keep the honest current identity deterministic instead of sending an
+        # underspecified label through the generic Q&A fallback.
+        "current_title": "IT Student",
     }
 
     try:

@@ -426,7 +426,11 @@ def resolve_proxy_url(cli_proxy: str | None = None) -> str:
 
 
 def align_capmonster_proxy_env(env: dict | None = None) -> None:
-    """Align CapMonster with the browser proxy for this bot/portal."""
+    """Align CapMonster/CapSolver with the browser proxy for this bot/portal.
+
+    CapSolver AntiCloudflareTask and reCAPTCHA tokens must use the same egress
+    IP as the browser tab, otherwise Cloudflare rejects cf_clearance.
+    """
     target = env if env is not None else os.environ
     cf_heavy = is_cf_heavy_portal(env=target)
     if cf_heavy:
@@ -434,6 +438,7 @@ def align_capmonster_proxy_env(env: dict | None = None) -> None:
             (target.get("NSTBROWSER_PROXY_URL") or "").strip()
             or (target.get("PROXY_CHEAP_URL") or "").strip()
             or (target.get("JOBSPY_PROXY_DATAIMPULSE") or "").strip()
+            or (target.get("CAPSOLVER_PROXY_URL") or "").strip()
             or (target.get("CAPMONSTER_PROXY_URL") or "").strip()
             or (target.get("PROXY_URL") or "").strip()
         )
@@ -451,6 +456,7 @@ def align_capmonster_proxy_env(env: dict | None = None) -> None:
                 browser = cheap
         if browser:
             target["CAPMONSTER_PROXY_URL"] = browser
+            target["CAPSOLVER_PROXY_URL"] = browser
             target["PROXY_URL"] = browser
             target["NSTBROWSER_PROXY_URL"] = browser
             target["JOBBOTS_CF_HEAVY_PROXY"] = "cheap"
@@ -460,6 +466,7 @@ def align_capmonster_proxy_env(env: dict | None = None) -> None:
         (target.get("NSTBROWSER_PROXY_URL") or "").strip()
         or (target.get("WEBSHARE_PROXY_URL") or "").strip()
         or (target.get("JOBSPY_PROXY_WEBSHARE") or "").strip()
+        or (target.get("CAPSOLVER_PROXY_URL") or "").strip()
         or (target.get("CAPMONSTER_PROXY_URL") or "").strip()
         or (target.get("PROXY_URL") or "").strip()
         or (target.get("PROXY_CHEAP_URL") or "").strip()
@@ -473,13 +480,36 @@ def align_capmonster_proxy_env(env: dict | None = None) -> None:
         browser = sticky
     if browser:
         target["CAPMONSTER_PROXY_URL"] = browser
+        target["CAPSOLVER_PROXY_URL"] = browser
         if sticky and _looks_rotating_proxy((target.get("PROXY_URL") or "").strip()):
             target["PROXY_URL"] = sticky
 
 
 def stamp_cf_heavy_proxy_env(env: dict, *, portal: str = "", bot_name: str = "") -> dict:
-    """Force Proxy-Cheap onto env for Indeed/Glassdoor/Workopolis apply workers."""
+    """Force Proxy-Cheap onto env for Indeed/Glassdoor/Workopolis apply workers.
+
+    Honor ``JOBBOTS_CF_HEAVY_PROXY=webshare`` (or FORCE_WEBSHARE_ALL) to keep
+    sticky Webshare when Cheap auth is broken or intentionally disabled.
+    """
     if not is_cf_heavy_portal(bot_name=bot_name, portal=portal, env=env):
+        force = (env.get("JOBBOTS_CF_HEAVY_PROXY") or "").strip().lower()
+        force_ws = (env.get("JOBBOTS_FORCE_WEBSHARE_ALL") or "").strip().lower() in {
+            "1", "true", "yes", "on",
+        }
+        if force in {"webshare", "static"} or force_ws:
+            webshare = (
+                (env.get("WEBSHARE_PROXY_URL") or "").strip()
+                or (env.get("JOBSPY_PROXY_WEBSHARE") or "").strip()
+                or (get_proxy_url("WEBSHARE_PROXY_URL") or "").strip()
+                or (get_proxy_url("JOBSPY_PROXY_WEBSHARE") or "").strip()
+            )
+            if webshare:
+                webshare = normalize_proxy_url(webshare)
+                env["JOBBOTS_CF_HEAVY_PROXY"] = "webshare"
+                env["NSTBROWSER_PROXY_URL"] = webshare
+                env["PROXY_URL"] = webshare
+                env["CAPMONSTER_PROXY_URL"] = webshare
+                env["CAPSOLVER_PROXY_URL"] = webshare
         return env
     cheap = (
         (env.get("PROXY_CHEAP_URL") or "").strip()
@@ -497,13 +527,20 @@ def stamp_cf_heavy_proxy_env(env: dict, *, portal: str = "", bot_name: str = "")
     env["NSTBROWSER_PROXY_URL"] = cheap
     env["PROXY_URL"] = cheap
     env["CAPMONSTER_PROXY_URL"] = cheap
-    # CapMonster must not silently fall back to Webshare for these portals.
+    env["CAPSOLVER_PROXY_URL"] = cheap
+    # CapSolver/CapMonster must not silently fall back to Webshare for these portals.
     env["CAPTCHA_CAPMONSTER_PROXYLESS_FALLBACK"] = env.get("CAPTCHA_CAPMONSTER_PROXYLESS_FALLBACK") or "0"
     return env
 
 
 # Startup sweep to normalize keys in environment
-for key in ("PROXY_URL", "CAPMONSTER_PROXY_URL", "PROXY_CHEAP_URL", "WEBSHARE_PROXY_URL"):
+for key in (
+    "PROXY_URL",
+    "CAPMONSTER_PROXY_URL",
+    "CAPSOLVER_PROXY_URL",
+    "PROXY_CHEAP_URL",
+    "WEBSHARE_PROXY_URL",
+):
     val = os.environ.get(key)
     if val:
         os.environ[key] = normalize_proxy_url(val)

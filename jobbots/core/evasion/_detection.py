@@ -48,10 +48,8 @@ _INDEED_CF_ACTIVE_PAGE_TYPES = (
 _CF_TURNSTILE_SELECTORS = (
     "iframe[src*='challenges.cloudflare.com']",
     "iframe[src*='turnstile']",
-    "iframe[title*='challenge' i]",
     "iframe[title*='turnstile' i]",
     ".cf-turnstile",
-    "[data-sitekey]",
 )
 
 # ── reCAPTCHA v2 WIDGET (checkbox) selectors ─────────────────────────────────
@@ -138,15 +136,26 @@ def _indeed_submit_button_ready(page) -> bool:
         return bool(page.evaluate(
             """
             () => {
-                const buttons = Array.from(document.querySelectorAll("button"));
-                const btn = buttons.find((button) => {
-                    const text = (button.innerText || button.textContent || "").trim().toLowerCase();
-                    return text.includes("submit your application") || text.includes("submit application");
-                });
+                const selectors = [
+                    "button[data-testid='submit-application-button']",
+                    "button[data-testid*='submit']",
+                    "button[data-testid*='Submit']",
+                    "button[type='submit']",
+                    "button[aria-label*='Submit']",
+                    "button[aria-label*='submit']",
+                ];
+                let btn = document.querySelector(selectors.join(","));
+                if (!btn) {
+                    const buttons = Array.from(document.querySelectorAll("button"));
+                    btn = buttons.find((button) => {
+                        const text = (button.innerText || button.textContent || "").trim().toLowerCase();
+                        return text.includes("submit your application") || text.includes("submit application") || text === "submit";
+                    });
+                }
                 if (!btn) return false;
                 const style    = window.getComputedStyle(btn);
                 const disabled = Boolean(btn.disabled || btn.getAttribute("aria-disabled") === "true");
-                const hidden   = style.display === "none" || style.visibility === "hidden";
+                const hidden   = style.display === "none" || style.visibility === "hidden" || style.opacity === "0";
                 return !disabled && !hidden;
             }
             """

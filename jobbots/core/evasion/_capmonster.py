@@ -307,9 +307,32 @@ def _extract_recaptcha_params(page) -> dict:
                     isEnterprise: false,
                 };
 
+                // SmartApply renders an invisible v3 widget alongside the
+                // visible image challenge.  The bframe is the authoritative
+                // active image-gate widget; choose it before generic
+                // [data-sitekey] scanning so we never solve the v3 widget
+                // while the visible v2 gate keeps Submit disabled.
+                const activeChallengeFrame = Array.from(document.querySelectorAll(
+                    "iframe[src*='recaptcha/enterprise/bframe'], iframe[src*='recaptcha/api2/bframe']"
+                )).find((frame) => {
+                    try { return !!new URL(frame.src, location.href).searchParams.get("k"); }
+                    catch (err) { return false; }
+                });
+                if (activeChallengeFrame) {
+                    try {
+                        const activeUrl = new URL(activeChallengeFrame.src, location.href);
+                        params.websiteKey = activeUrl.searchParams.get("k") || "";
+                        params.isEnterprise = activeUrl.pathname.includes("/enterprise/");
+                        params.isInvisible = false;
+                        params.apiDomain = activeUrl.hostname.includes("recaptcha.net")
+                            ? "www.recaptcha.net" : "www.google.com";
+                    } catch (err) {}
+                }
+
                 const widget = document.querySelector("[data-sitekey]");
-                if (widget) {
-                    params.websiteKey = widget.getAttribute("data-sitekey") || "";
+                const widgetKey = widget && (widget.getAttribute("data-sitekey") || "");
+                if (widget && (!params.websiteKey || widgetKey === params.websiteKey)) {
+                    params.websiteKey = widgetKey || params.websiteKey;
                     params.recaptchaDataSValue = widget.getAttribute("data-s") || "";
                     params.isInvisible = (widget.getAttribute("data-size") || "").toLowerCase() === "invisible";
                     for (const attr of widget.attributes) {
@@ -330,6 +353,13 @@ def _extract_recaptcha_params(page) -> dict:
                         const dataS = url.searchParams.get("s");
                         const size  = url.searchParams.get("size");
                         const action = url.searchParams.get("sa") || url.searchParams.get("action");
+                        // SmartApply can load two Enterprise widgets at once:
+                        // the visible image gate and a separate invisible v3
+                        // protection widget.  Once we select a sitekey, do
+                        // not borrow size/action/data from the other widget.
+                        // In particular, marking the visible image gate as
+                        // invisible produces an invalid CapSolver v2 task.
+                        if (key && params.websiteKey && key !== params.websiteKey) continue;
                         if (!params.websiteKey && key) params.websiteKey = key;
                         if (!params.recaptchaDataSValue && dataS) params.recaptchaDataSValue = dataS;
                         if (dataS && !params.enterprisePayload.s) params.enterprisePayload.s = dataS;
@@ -340,6 +370,31 @@ def _extract_recaptcha_params(page) -> dict:
                         if (url.pathname.includes("/enterprise/") || src.includes("/enterprise/")) {
                             params.isEnterprise = true;
                         }
+                    } catch (err) {}
+                }
+
+                // The DOM frequently exposes SmartApply's short internal
+                // data-s label instead of the active Enterprise anchor data.
+                // Prefer the most recent real /anchor network URL: it carries
+                // the exact k/sa/s parameters used to initialise the widget.
+                const anchors = performance.getEntriesByType("resource")
+                    .map(entry => entry.name || "")
+                    .filter(name => name.includes("/anchor"));
+                for (const src of anchors.slice().reverse()) {
+                    try {
+                        const url = new URL(src, location.href);
+                        const key = url.searchParams.get("k");
+                        if (key && params.websiteKey && key !== params.websiteKey) continue;
+                        const dataS = url.searchParams.get("s");
+                        const action = url.searchParams.get("sa");
+                        if (key) params.websiteKey = key;
+                        if (dataS && dataS.length >= 50) {
+                            params.recaptchaDataSValue = dataS;
+                            params.enterprisePayload.s = dataS;
+                        }
+                        if (action) params.pageAction = action;
+                        if (url.pathname.includes("/enterprise/")) params.isEnterprise = true;
+                        break;
                     } catch (err) {}
                 }
 
@@ -577,7 +632,7 @@ def _extract_turnstile_params(page) -> dict:
 
                 const attr = (el, name) => el ? (el.getAttribute(name) || "") : "";
                 const widgets = Array.from(document.querySelectorAll(
-                    ".cf-turnstile, [data-sitekey], [data-testid*='turnstile' i]"
+                    ".cf-turnstile, [data-testid*='turnstile' i]"
                 ));
                 for (const widget of widgets) {
                     const cls    = widget.className || "";

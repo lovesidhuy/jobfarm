@@ -58,19 +58,31 @@ from jobbots.core.portals.mongo_storage_legacy import (  # noqa: F401 - re-expor
     get_job_ids,
     save_job_record,
 )
-from config.settings import skipped_file_name
+try:
+    from config.settings import skipped_file_name
+except ImportError:
+    from automation_monorepo.config.settings import skipped_file_name
 try:
     from config.settings import file_name as _settings_file_name
 except ImportError:
-    _settings_file_name = "all excels/indeed_general_applied_applications_history.csv"
+    try:
+        from automation_monorepo.config.settings import file_name as _settings_file_name
+    except ImportError:
+        _settings_file_name = "all excels/indeed_general_applied_applications_history.csv"
 try:
     from config.settings import failed_file_name as _settings_failed_file_name
 except ImportError:
-    _settings_failed_file_name = "all excels/indeed_general_failed_applications_history.csv"
+    try:
+        from automation_monorepo.config.settings import failed_file_name as _settings_failed_file_name
+    except ImportError:
+        _settings_failed_file_name = "all excels/indeed_general_failed_applications_history.csv"
 try:
     from config.settings import _bot_name
 except ImportError:
-    _bot_name = "indeed_general"
+    try:
+        from automation_monorepo.config.settings import _bot_name
+    except ImportError:
+        _bot_name = "indeed_general"
 
 # ── Speed constants — all artificial waits in one place ──────────────────────
 # Reduce these to speed up; increase them if bot trips bot-detection.

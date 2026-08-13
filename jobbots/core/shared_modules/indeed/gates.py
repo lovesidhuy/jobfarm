@@ -474,7 +474,7 @@ def _obvious_non_it_reject(title: str, company: str, location: str,
         "private equity", "venture studio", "venture capital",
         "equity analyst", "investment analyst", "portfolio analyst",
         "asset management", "fund accountant", "fund analyst",
-        "financial analyst", "finance analyst", "capital markets",
+        "financial analyst", "finance analyst", "credit analyst", "capital markets",
         # Government / policy / non-IT coordinator roles
         "intergovernmental", "major projects coordinator",
         "policy analyst", "government relations",
@@ -543,6 +543,7 @@ def _obvious_non_it_reject(title: str, company: str, location: str,
         "enrollment coordinator", "financial services", "student financial",
         "retail operations", "retail financial",
         "project geotechnical", "civil utility", "heavy equipment",
+        "geomorphologist", "coastal professional",
     )
     for term in clearly_non_it_title_terms:
         if term in title_l:

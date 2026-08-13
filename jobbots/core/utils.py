@@ -21,7 +21,10 @@ from random import randint
 from datetime import datetime, timedelta
 from pprint import pprint
 
-from config.settings import logs_folder_path
+try:
+    from config.settings import logs_folder_path
+except ImportError:
+    from automation_monorepo.config.settings import logs_folder_path
 
 
 def _safe_alert(msg: str, title: str = "") -> None:

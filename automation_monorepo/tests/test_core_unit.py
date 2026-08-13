@@ -23,7 +23,7 @@ def test_supervised_bot_configs():
     assert "indeed_general" in names  # office/CS Indeed bot
     assert "glassdoor_it" in names
     assert "workopolis_it" in names
-    # Sole LinkedIn bot (linkedin_general NST); linkedin_it disabled.
+    # Sole LinkedIn bot (lovepreetsidhu8173 NST); linkedin_it disabled.
     assert "linkedin_general" in names
     assert "linkedin_it" not in names
     # Google ATS (Greenhouse/Lever) discovery + apply profile for cloud cycle.
@@ -91,11 +91,12 @@ def test_indeed_work_history_is_exact_and_dates_are_blank_or_iso():
     assert not valid_work_history_date("N/A")
 
 
-def test_build_subprocess_env_sets_identity(monkeypatch):
+def test_build_subprocess_env_sets_identity(tmp_path, monkeypatch):
     from pathlib import Path
     from core.supervisor_runtime import build_subprocess_env
 
-    base = Path(__file__).resolve().parents[1]
+    # Avoid loading local automation_monorepo/.env (may pin CapSolver).
+    base = Path(tmp_path)
     cfg = {
         "bot_name": "indeed_it",
         "cdp_port": "9222",
@@ -106,17 +107,24 @@ def test_build_subprocess_env_sets_identity(monkeypatch):
     monkeypatch.setenv("IMAP_EMAIL_IT", "it@example.com")
     monkeypatch.setenv("IMAP_APP_PASSWORD_IT", "secret")
     monkeypatch.delenv("BROWSER_VENDOR", raising=False)
+    monkeypatch.delenv("CAPTCHA_CLOUDFLARE_SOLVER", raising=False)
 
     def fake_secret(name, default=""):
         if name == "NSTBROWSER_PROFILE_ID_INDEED_IT":
             return "nst-indeed-it"
         return default
 
+    parent = {
+        k: v
+        for k, v in os.environ.items()
+        if k not in {"CAPTCHA_CLOUDFLARE_SOLVER", "BROWSER_VENDOR"}
+    }
+
     env = build_subprocess_env(
         cfg,
         "test-run",
         base,
-        parent_environ=os.environ.copy(),
+        parent_environ=parent,
         get_secret=fake_secret,
     )
     assert env["BOT_NAME"] == "indeed_it"
@@ -126,7 +134,7 @@ def test_build_subprocess_env_sets_identity(monkeypatch):
     assert env["IMAP_APP_PASSWORD"] == "secret"
     assert env["BROWSER_VENDOR"] == "nstbrowser"
     assert env["NSTBROWSER_PROFILE_ID"] == "nst-indeed-it"
-    assert env["CAPTCHA_CLOUDFLARE_SOLVER"] == "capmonster"
+    assert env["CAPTCHA_CLOUDFLARE_SOLVER"] == "capsolver"
 
 
 def test_nstbrowser_vendor_does_not_fallback_to_other_profiles(monkeypatch):
@@ -437,6 +445,303 @@ def test_recaptcha_retries_full_proxy_proxyless_rounds(monkeypatch):
         (True, False), (False, False),
         (False, True), (True, True),
     ]
+
+
+def test_capsolver_recaptcha_prefers_sticky_proxy_formats(monkeypatch):
+    """CapMonster/CapSolver Playwright: sticky proxy fields first; full SmartApply URL."""
+    from core.evasion import _capsolver
+
+    attempted = []
+
+    monkeypatch.setattr(_capsolver, "_capsolver_client_key", lambda: "client-key")
+    monkeypatch.setenv("CAPSOLVER_RECAPTCHA_SEND_COOKIES", "1")
+    monkeypatch.setattr(
+        _capsolver,
+        "_extract_recaptcha_params",
+        lambda page: {
+            "websiteURL": "https://smartapply.indeed.com/beta/indeedapply/form/review-module",
+            "websiteKey": "site-key",
+            "isEnterprise": True,
+            "enterprisePayload": {"s": "data-s-token-" * 8},
+            "recaptchaDataSValue": "data-s-token-" * 8,
+    # This is the reCAPTCHA anchor ``sa`` action required by CapSolver.
+            "pageAction": "submit",
+        },
+    )
+    monkeypatch.setattr(_capsolver, "_get_page_user_agent", lambda page: "ua-chrome")
+    monkeypatch.setattr(_capsolver, "_get_page_cookies", lambda page: "cf_clearance=abc; INDEED_CSRF=1")
+    monkeypatch.setattr(
+        _capsolver,
+        "_capsolver_proxy_task_overlays",
+        lambda: [
+            ("fields http", {"proxyType": "http", "proxyAddress": "1.2.3.4", "proxyPort": 8099, "proxyLogin": "u", "proxyPassword": "p"}),
+            ("http:ip:port:user:pass", {"proxy": "http:1.2.3.4:8099:u:p"}),
+        ],
+    )
+
+    def fake_create(client_key, task):
+        attempted.append(dict(task))
+        _capsolver._create_capsolver_task.last_error_code = None
+        return f"task-{len(attempted)}"
+
+    def fake_poll(client_key, task_id, timeout):
+        # First proxy encoding fails connect; second succeeds.
+        if len(attempted) == 1:
+            _capsolver._poll_capsolver_result.last_error_code = "ERROR_PROXY_CONNECT_REFUSED"
+            return None
+        _capsolver._poll_capsolver_result.last_error_code = None
+        return {"gRecaptchaResponse": "token-ok"}
+
+    monkeypatch.setattr(_capsolver, "_create_capsolver_task", fake_create)
+    monkeypatch.setattr(_capsolver, "_poll_capsolver_result", fake_poll)
+    monkeypatch.setattr(
+        _capsolver,
+        "_finalize_capsolver_recaptcha_token",
+        lambda page, solution: solution.get("gRecaptchaResponse") == "token-ok",
+    )
+    monkeypatch.delenv("CAPSOLVER_RECAPTCHA_PROXYLESS_FALLBACK", raising=False)
+
+    assert _capsolver.solve_recaptcha_with_capsolver(object(), timeout=30) is True
+    assert len(attempted) == 2
+    assert attempted[0]["type"] == "ReCaptchaV2EnterpriseTask"
+    assert attempted[0].get("proxyType") == "http"
+    # CapSolver docs + CapMonster: full page URL, not origin-only.
+    assert "review-module" in attempted[0]["websiteURL"]
+    assert attempted[0].get("userAgent") == "ua-chrome"
+    assert attempted[0].get("cookies")
+    assert attempted[0].get("enterprisePayload", {}).get("s") == "data-s-token-" * 8
+    assert attempted[0]["pageAction"] == "submit"
+    assert attempted[1]["proxy"] == "http:1.2.3.4:8099:u:p"
+    assert all("ProxyLess" not in t["type"] for t in attempted)
+
+
+def test_capsolver_recaptcha_skips_proxyless_for_enterprise_with_proxy(monkeypatch):
+    """Indeed IP-binds tokens — never ProxyLess when sticky Webshare is present."""
+    from core.evasion import _capsolver
+
+    attempted = []
+
+    monkeypatch.setattr(_capsolver, "_capsolver_client_key", lambda: "client-key")
+    monkeypatch.setattr(
+        _capsolver,
+        "_extract_recaptcha_params",
+        lambda page: {
+            "websiteURL": "https://www.indeed.com/",
+            "websiteKey": "site-key",
+            "isEnterprise": True,
+        },
+    )
+    monkeypatch.setattr(_capsolver, "_get_page_user_agent", lambda page: "ua")
+    monkeypatch.setattr(_capsolver, "_get_page_cookies", lambda page: "")
+    monkeypatch.setattr(
+        _capsolver,
+        "_capsolver_proxy_task_overlays",
+        lambda: [("ip:port:user:pass", {"proxy": "1.2.3.4:8099:u:p"})],
+    )
+
+    def fake_create(client_key, task):
+        attempted.append(task["type"])
+        _capsolver._create_capsolver_task.last_error_code = None
+        return "task-1"
+
+    def fake_poll(client_key, task_id, timeout):
+        _capsolver._poll_capsolver_result.last_error_code = "ERROR_CAPTCHA_UNSOLVABLE"
+        return None
+
+    monkeypatch.setattr(_capsolver, "_create_capsolver_task", fake_create)
+    monkeypatch.setattr(_capsolver, "_poll_capsolver_result", fake_poll)
+    # Even with fallback=1, Indeed must not ProxyLess.
+    monkeypatch.setenv("CAPSOLVER_RECAPTCHA_PROXYLESS_FALLBACK", "1")
+
+    assert _capsolver.solve_recaptcha_with_capsolver(object(), timeout=10) is False
+    # Enterprise first, then standard V2 fallback on sticky proxy (no ProxyLess).
+    assert "ReCaptchaV2EnterpriseTask" in attempted
+    assert "ReCaptchaV2Task" in attempted
+    assert all("ProxyLess" not in t for t in attempted)
+
+
+def test_capsolver_enterprise_unsupported_falls_back_to_v2(monkeypatch):
+    from core.evasion import _capsolver
+
+    attempted = []
+
+    monkeypatch.setattr(_capsolver, "_capsolver_client_key", lambda: "client-key")
+    monkeypatch.setattr(
+        _capsolver,
+        "_extract_recaptcha_params",
+        lambda page: {
+            "websiteURL": "https://smartapply.indeed.com/beta/indeedapply/form/review-module",
+            "websiteKey": "site-key",
+            "isEnterprise": True,
+            "enterprisePayload": {"s": "s-token"},
+            "recaptchaDataSValue": "s-token",
+        },
+    )
+    monkeypatch.setattr(_capsolver, "_get_page_user_agent", lambda page: "ua")
+    monkeypatch.setattr(_capsolver, "_get_page_cookies", lambda page: "a=b")
+    monkeypatch.setattr(
+        _capsolver,
+        "_capsolver_proxy_task_overlays",
+        lambda: [("fields http", {"proxyType": "http", "proxyAddress": "1.2.3.4", "proxyPort": 8099, "proxyLogin": "u", "proxyPassword": "p"})],
+    )
+
+    def fake_create(client_key, task):
+        attempted.append(dict(task))
+        if task["type"].endswith("EnterpriseTask"):
+            _capsolver._create_capsolver_task.last_error_code = (
+                "ERROR_INVALID_TASK_DATA: We don't support this service"
+            )
+            return None
+        _capsolver._create_capsolver_task.last_error_code = None
+        return "task-v2"
+
+    def fake_poll(client_key, task_id, timeout):
+        _capsolver._poll_capsolver_result.last_error_code = None
+        return {"gRecaptchaResponse": "token-v2-ok"}
+
+    monkeypatch.setattr(_capsolver, "_create_capsolver_task", fake_create)
+    monkeypatch.setattr(_capsolver, "_poll_capsolver_result", fake_poll)
+    monkeypatch.setattr(
+        _capsolver,
+        "_finalize_capsolver_recaptcha_token",
+        lambda page, solution: True,
+    )
+    monkeypatch.setenv("CAPSOLVER_RECAPTCHA_PROXYLESS_FALLBACK", "1")
+
+    assert _capsolver.solve_recaptcha_with_capsolver(object(), timeout=30) is True
+    types = [t["type"] for t in attempted]
+    assert types[0] == "ReCaptchaV2EnterpriseTask"
+    assert "ReCaptchaV2Task" in types
+    v2 = next(t for t in attempted if t["type"] == "ReCaptchaV2Task")
+    # CapMonster force_standard: s as recaptchaDataSValue, not enterprisePayload.
+    assert v2.get("recaptchaDataSValue") == "s-token"
+    assert "enterprisePayload" not in v2
+    assert all("ProxyLess" not in t["type"] for t in attempted)
+
+
+def test_capsolver_indeed_requires_sticky_proxy(monkeypatch):
+    from core.evasion import _capsolver
+
+    monkeypatch.setattr(_capsolver, "_capsolver_client_key", lambda: "client-key")
+    monkeypatch.setattr(
+        _capsolver,
+        "_extract_recaptcha_params",
+        lambda page: {
+            "websiteURL": "https://smartapply.indeed.com/form/review",
+            "websiteKey": "site-key",
+            "isEnterprise": True,
+        },
+    )
+    monkeypatch.setattr(_capsolver, "_get_page_user_agent", lambda page: "ua")
+    monkeypatch.setattr(_capsolver, "_get_page_cookies", lambda page: "")
+    monkeypatch.setattr(_capsolver, "_capsolver_proxy_task_overlays", lambda: [])
+
+    assert _capsolver.solve_recaptcha_with_capsolver(object(), timeout=10) is False
+
+
+def test_capsolver_anticloudflare_applies_cf_clearance(monkeypatch):
+    from core.evasion import _capsolver
+
+    class FakePage:
+        url = "https://smartapply.indeed.com/beta/indeedapply/form/review-module"
+
+        def evaluate(self, *_a, **_k):
+            return self.url
+
+        def reload(self, **_k):
+            return None
+
+        def goto(self, *_a, **_k):
+            return None
+
+    monkeypatch.setattr(_capsolver, "_capsolver_client_key", lambda: "client-key")
+    monkeypatch.setattr(
+        _capsolver,
+        "_capsolver_anticloudflare_proxy_overlays",
+        lambda: [("ip:port:user:pass", {"proxy": "1.2.3.4:8099:u:p"})],
+    )
+    monkeypatch.setattr(_capsolver, "_get_page_user_agent", lambda page: "Mozilla/5.0 Test")
+    monkeypatch.setattr(
+        _capsolver,
+        "_page_html_for_cf",
+        lambda page: "<html><title>Just a moment...</title><body>cf-challenge</body></html>",
+    )
+
+    created = []
+
+    def fake_create(client_key, task):
+        created.append(dict(task))
+        _capsolver._create_capsolver_task.last_error_code = None
+        return "cf-task-1"
+
+    def fake_poll(client_key, task_id, timeout):
+        return {
+            "cookies": {"cf_clearance": "clearance-token-xyz"},
+            "token": "clearance-token-xyz",
+            "userAgent": "Mozilla/5.0 Test",
+        }
+
+    applied = {"ok": False}
+
+    monkeypatch.setattr(_capsolver, "_create_capsolver_task", fake_create)
+    monkeypatch.setattr(_capsolver, "_poll_capsolver_result", fake_poll)
+    monkeypatch.setattr(
+        _capsolver,
+        "_apply_capmonster_cf_clearance",
+        lambda page, value: applied.__setitem__("ok", value == "clearance-token-xyz") or True,
+    )
+    monkeypatch.setattr(
+        "jobbots.core.evasion._capmonster._apply_capmonster_cookies",
+        lambda page, cookies: None,
+    )
+    monkeypatch.setattr(
+        "jobbots.core.evasion._capmonster._cloudflare_clearance_accept_wait_seconds",
+        lambda default=30: 1,
+    )
+    monkeypatch.setattr(
+        "jobbots.core.evasion._capmonster._wait_for_cloudflare_clearance",
+        lambda page, timeout=1: True,
+    )
+    monkeypatch.setattr(
+        "jobbots.core.evasion._detection.is_cloudflare_challenge",
+        lambda page: False,
+    )
+
+    assert _capsolver.solve_cloudflare_challenge_with_capsolver(FakePage(), timeout=30) is True
+    assert created and created[0]["type"] == "AntiCloudflareTask"
+    assert created[0]["proxy"] == "1.2.3.4:8099:u:p"
+    assert "html" in created[0]
+    assert applied["ok"] is True
+
+
+def test_captcha_submit_ready_does_not_block_submission(monkeypatch):
+    import sys
+    from pathlib import Path
+
+    repo = Path(__file__).resolve().parents[2]
+    target_dir = repo / "master" / "it_indeed cwgeopy" / "Auto_indeed"
+    if str(target_dir) not in sys.path:
+        sys.path.insert(0, str(target_dir))
+
+    import modules
+    shared_path = str(repo / "jobbots" / "core" / "shared_modules")
+    if shared_path not in getattr(modules, "__path__", []):
+        modules.__path__.append(shared_path)
+
+    from jobbots.core.evasion._handlers import handle_recaptcha_challenge, handle_recaptcha_widget
+    from jobbots.core.shared_modules.indeed.smartapply import _captcha_still_blocking
+
+    class DummyPage:
+        url = "https://smartapply.indeed.com/beta/indeedapply/form/review-module"
+
+    page = DummyPage()
+    monkeypatch.setattr("jobbots.core.evasion._handlers._indeed_submit_button_ready", lambda p: True)
+    monkeypatch.setattr("jobbots.core.shared_modules.indeed.smartapply._is_submit_button_ready", lambda p: True)
+    monkeypatch.setattr("jobbots.core.evasion._handlers.is_recaptcha_challenge", lambda p: True)
+
+    assert handle_recaptcha_challenge(page, None) is True
+    assert handle_recaptcha_widget(page, None) is True
+    assert _captcha_still_blocking(page) is False
 
 
 def test_nstbrowser_profile_rotation_round_robin(tmp_path, monkeypatch):

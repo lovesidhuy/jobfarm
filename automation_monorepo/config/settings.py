@@ -65,7 +65,10 @@ generated_resume_path = "all resumes/" # (In Development)
 
 
 import os
-from core.secret_manager import get_secret
+try:
+    from core.secret_manager import get_secret
+except ImportError:
+    from jobbots.core.secret_manager import get_secret
 
 _job_profile = (get_secret("JOB_PROFILE", "IT") or "IT").upper()
 
@@ -150,15 +153,13 @@ bot_instance_id = int(get_secret("BOT_INSTANCE_ID", 0))
 captcha_cf_timeout = 45            # seconds
 
 # Cloudflare solving strategy:
-#   "seleniumbase" = current GUI/UC Cloudflare bypass flow.
-#   "capmonster"  = try CapMonster Cloud Turnstile token first, then fall back
-#                   to non-GUI reload/polling unless GUI fallback is enabled.
-captcha_cloudflare_solver = get_secret("CAPTCHA_CLOUDFLARE_SOLVER", "seleniumbase")  # "seleniumbase" or "capmonster"
+#   "capsolver"   = CapSolver AntiCloudflareTask cf_clearance (primary on farm).
+#   "capmonster"  = CapMonster Turnstile/cf_clearance (legacy; key often dead).
+#   "seleniumbase"= GUI/UC Cloudflare bypass flow.
+captcha_cloudflare_solver = get_secret("CAPTCHA_CLOUDFLARE_SOLVER", "capsolver")
 
-# Use CapMonster API tokens for CAPTCHA solving.
-# Leave this False when you do not have a CAPTCHA API key. The bot will keep the
-# browser open and wait for you to solve CAPTCHA challenges yourself.
-use_capmonster_captcha_solver = True        # True or False
+# CapMonster is legacy; CapSolver is the active provider (USE_CAPSOLVER=1).
+use_capmonster_captcha_solver = False       # True only if CapMonster key is live
 
 # Allow the bot to use your desktop mouse/keyboard for stubborn CAPTCHA pages.
 # Default is False: the browser stays open and waits for you to solve it.

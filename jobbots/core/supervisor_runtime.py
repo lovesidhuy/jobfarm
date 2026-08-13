@@ -181,8 +181,9 @@ def apply_unattended_automation_env(env: dict) -> None:
     from jobbots.core.captcha_runtime import apply_standard_captcha_env
 
     apply_standard_captcha_env(env)
-    # Supervisor production path always prefers CapMonster for CF when unset.
-    env.setdefault("CAPTCHA_CLOUDFLARE_SOLVER", "capmonster")
+    # CapSolver is the live CF provider (CapMonster keys dead on the farm).
+    env.setdefault("CAPTCHA_CLOUDFLARE_SOLVER", "capsolver")
+    env.setdefault("USE_CAPSOLVER", "1")
 
 
 def inject_infisical_secrets_into_env(
