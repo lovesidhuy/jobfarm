@@ -1,4 +1,4 @@
-# JobFarm 🚜
+# JobsFarm 🚜
 
 <p align="center">
   <strong>Open-source job discovery & application automation.</strong>
@@ -6,7 +6,7 @@
 
 <div align="center">
   <h2>Supported Platforms & Operational Reality</h2>
-  <p>JobFarm supports 9+ major job boards and ATS platforms. Due to varying anti-bot measures (Cloudflare, CAPTCHAs) and lead volume, productivity varies by portal. <em>For maximum success, pair JobFarm with high-quality leased rotational proxies, CapMonster/CapSolver, and NSTbrowser.</em></p>
+  <p>JobsFarm supports 9+ major job boards and ATS platforms. Due to varying anti-bot measures (Cloudflare, CAPTCHAs) and lead volume, productivity varies by portal. <em>For maximum success, pair JobsFarm with high-quality leased rotational proxies, CapMonster/CapSolver, and NSTbrowser.</em></p>
 </div>
 
 <table>
@@ -21,7 +21,7 @@
     <tr>
       <td><strong>Indeed</strong></td>
       <td>🟢 <strong>Highest Volume & Productivity</strong></td>
-      <td>The primary engine of JobFarm. Excellent conversion rates, but heavily dependent on strong residential proxies to avoid shadow-banning.</td>
+      <td>The primary engine of JobsFarm. Excellent conversion rates, but heavily dependent on strong residential proxies to avoid shadow-banning.</td>
     </tr>
     <tr>
       <td><strong>LinkedIn</strong></td>
@@ -85,9 +85,9 @@
 
 ## Overview
 
-**JobFarm** is a high-throughput, hands-free job discovery and application automation engine designed to operate either locally on your workstation or as a multi-node cloud farm on AWS and GCP.
+**JobsFarm** is a high-throughput, hands-free job discovery and application automation engine designed to operate either locally on your workstation or as a multi-node cloud farm on AWS and GCP.
 
-By combining browser automation (Playwright/Chrome CDP), anti-detection evasion (proxy ladders, Cloudflare bypass, CapMonster CAPTCHA resolution), an autonomous AI question-answering brain (curated 7,300+ line QA bank + multi-model LLM gateway), and automated ATS API scrapers, JobFarm automates every phase of modern job hunting—from discovery to final submission.
+By combining browser automation (Playwright/Chrome CDP), anti-detection evasion (proxy ladders, Cloudflare bypass, CapMonster CAPTCHA resolution), an autonomous AI question-answering brain (curated 7,300+ line QA bank + multi-model LLM gateway), and automated ATS API scrapers, JobsFarm automates every phase of modern job hunting—from discovery to final submission.
 
 ```
 ┌─────────────────┐     ┌─────────────────────┐     ┌──────────────────────┐
@@ -137,8 +137,8 @@ By combining browser automation (Playwright/Chrome CDP), anti-detection evasion 
 
 ### 1. Clone and Install
 ```bash
-git clone https://github.com/jobfarm/jobfarm.git
-cd jobfarm
+git clone https://github.com/JobsFarm/JobsFarm.git
+cd JobsFarm
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
@@ -218,7 +218,7 @@ See [docs/CLOUD_DEPLOYMENT.md](docs/CLOUD_DEPLOYMENT.md) for full cloud runbooks
 ## Repository Structure
 
 ```
-jobfarm/
+JobsFarm/
 ├── automation_monorepo/
 │   ├── bots/                # Entrypoints for 9+ portal bots
 │   ├── config/              # Profile configs (IT and General templates)
@@ -247,7 +247,7 @@ jobfarm/
 
 ## Citations & Acknowledgements
 
-JobFarm builds upon and adapts insights from the open-source automation community:
+JobsFarm builds upon and adapts insights from the open-source automation community:
 - **Auto_Job_Applier** by **Sai Vignesh Golla** and contributors — inspiration and foundational concepts for LinkedIn Easy Apply automation, form interaction, and Chrome extension integration.
 - **Custom Multi-Portal Architecture** — proprietary ground-up automation engines for Indeed (`ca.indeed.com` & global), Glassdoor, Workopolis, Job Bank Canada, and direct ATS platforms (Greenhouse, Ashby, Lever, BambooHR).
 - **python-jobspy** — high-efficiency scraping and multi-board job discovery across LinkedIn, Indeed, Glassdoor, and Google Jobs.
